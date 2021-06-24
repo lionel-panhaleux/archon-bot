@@ -1,8 +1,8 @@
-import archon_bot
+from archon_bot import bot, commands
 from . import conftest
 
 
-archon_bot.ITERATIONS = 100
+commands.ITERATIONS = 100
 
 
 @conftest.async_test
@@ -10,9 +10,9 @@ async def test_tournament_sanctioned(client_mock):
     guild = conftest.Guild(client_mock)
     user_1 = guild._create_member(1, "user_1")
     user_2 = guild._create_member(2, "user_2")
-    await archon_bot.on_ready()
+    await bot.on_ready()
 
-    await archon_bot.on_message(user_1.message("archon help"))
+    await bot.on_message(user_1.message("archon help"))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Archon help",
@@ -21,11 +21,11 @@ async def test_tournament_sanctioned(client_mock):
             ),
         }
 
-    await archon_bot.on_message(user_1.message("archon"))
+    await bot.on_message(user_1.message("archon"))
     with conftest.message(client_mock) as message:
         assert message == "No tournament in progress. `archon open` to start one."
 
-    await archon_bot.on_message(user_1.message("archon open 2 Testing It"))
+    await bot.on_message(user_1.message("archon open 2 Testing It"))
     with conftest.message(client_mock) as message:
         assert message == "Tournament open"
 
@@ -34,7 +34,7 @@ async def test_tournament_sanctioned(client_mock):
     assert roles["TI-Judge"] in conftest.me.roles
     assert roles["TI-Judge"] in user_1.roles
 
-    await archon_bot.on_message(user_1.message("archon help"))
+    await bot.on_message(user_1.message("archon help"))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Archon help",
@@ -80,7 +80,7 @@ async def test_tournament_sanctioned(client_mock):
                 "VP situation\n"
             ),
         }
-    await archon_bot.on_message(user_2.message("archon help"))
+    await bot.on_message(user_2.message("archon help"))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Archon help",
@@ -95,11 +95,11 @@ async def test_tournament_sanctioned(client_mock):
             ),
         }
     # #################################################################### appoint judge
-    await archon_bot.on_message(user_1.message("archon appoint <@2>"))
+    await bot.on_message(user_1.message("archon appoint <@2>"))
     with conftest.message(client_mock) as message:
         assert message == "Judge(s) appointed"
     assert roles["TI-Judge"] in user_2.roles
-    await archon_bot.on_message(user_1.message("archon"))
+    await bot.on_message(user_1.message("archon"))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Archon check-in",
@@ -114,24 +114,20 @@ async def test_tournament_sanctioned(client_mock):
         )
     )
     registrations.seek(0)
-    await archon_bot.on_message(
-        user_1.message("archon upload", attachment=registrations)
-    )
+    await bot.on_message(user_1.message("archon upload", attachment=registrations))
     with conftest.message(client_mock) as message:
         assert message == "This command can only be issued in the <#Judges> channel"
 
     judges_channel = guild._get_channel("Judges")
 
-    await archon_bot.on_message(
+    await bot.on_message(
         user_1.message(
             "archon upload", channel=judges_channel, attachment=registrations
         )
     )
     with conftest.message(client_mock) as message:
         assert message == "4 players registered"
-    await archon_bot.on_message(
-        user_1.message("archon registrations", channel=judges_channel)
-    )
+    await bot.on_message(user_1.message("archon registrations", channel=judges_channel))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Registrations",
@@ -148,44 +144,44 @@ async def test_tournament_sanctioned(client_mock):
     charles = guild._create_member(345, "Charles")
     doug = guild._create_member(456, "Doug")
     emili = guild._create_member(567, "Emili")
-    await archon_bot.on_message(alice.message("archon checkin 1234567"))
+    await bot.on_message(alice.message("archon checkin 1234567"))
     with conftest.message(client_mock) as message:
         assert message == "<@123> checked in as Alice #1234567"
-    await archon_bot.on_message(bob.message("archon checkin 666"))
+    await bot.on_message(bob.message("archon checkin 666"))
     with conftest.message(client_mock) as message:
         assert message == (
             "User not registered for that tournament.\n"
             "A <@&1> can use `archon register` to fix this."
         )
-    await archon_bot.on_message(bob.message("archon checkin 1234567"))
+    await bot.on_message(bob.message("archon checkin 1234567"))
     with conftest.message(client_mock) as message:
         assert message == (
             "ID# already used by <@123>,\n"
             "they can `archon drop` so you can use this ID instead."
         )
-    await archon_bot.on_message(bob.message("archon checkin #2345678"))
+    await bot.on_message(bob.message("archon checkin #2345678"))
     with conftest.message(client_mock) as message:
         assert message == "<@234> checked in as Bob #2345678"
-    await archon_bot.on_message(charles.message("archon checkin 3456789"))
+    await bot.on_message(charles.message("archon checkin 3456789"))
     with conftest.message(client_mock) as message:
         assert message == "<@345> checked in as Charles #3456789"
-    await archon_bot.on_message(doug.message("archon checkin 4567890"))
+    await bot.on_message(doug.message("archon checkin 4567890"))
     with conftest.message(client_mock) as message:
         assert message == "<@456> checked in as Doug #4567890"
     # ################################################################ late registration
-    await archon_bot.on_message(user_1.message("archon register 5678901 Emili"))
+    await bot.on_message(user_1.message("archon register 5678901 Emili"))
     with conftest.message(client_mock) as message:
         assert message == "Emili registered with ID# 5678901"
-    await archon_bot.on_message(user_1.message("archon checkin 5678901 <@567>"))
+    await bot.on_message(user_1.message("archon checkin 5678901 <@567>"))
     with conftest.message(client_mock) as message:
         assert message == "<@567> checked in as Emili #5678901"
-    await archon_bot.on_message(user_1.message("archon status"))
+    await bot.on_message(user_1.message("archon status"))
     with conftest.message(client_mock) as message:
         assert message == (
             "**Testing It** (2R+F)\n" "5 players registered\n" "5 players checked in"
         )
     # ################################################################## seating round 1
-    await archon_bot.on_message(user_1.message("archon seat"))
+    await bot.on_message(user_1.message("archon seat"))
     with conftest.message(client_mock) as message:
         assert message["title"] == "Round 1 seating"
         assert len(message["fields"]) == 1
@@ -198,10 +194,10 @@ async def test_tournament_sanctioned(client_mock):
         assert doug._roles_names == {"TI-Table-1"}
         assert emili._roles_names == {"TI-Table-1"}
     # ############################################################### warnings, drop, DQ
-    await archon_bot.on_message(user_1.message("archon warn 2345678 slow play"))
+    await bot.on_message(user_1.message("archon warn 2345678 slow play"))
     with conftest.message(client_mock) as message:
         assert message == "Player warned"
-    await archon_bot.on_message(
+    await bot.on_message(
         user_1.message(
             "archon warn <@234> rules misrepresentation",
             channel=guild._get_channel("table-1"),
@@ -210,53 +206,51 @@ async def test_tournament_sanctioned(client_mock):
     with conftest.message(client_mock, all=True) as messages:
         assert messages[0] == ("Player has been warned before:\n" "- R1: slow play")
         assert messages[1] == "Player warned"
-    await archon_bot.on_message(bob.message("archon drop"))
+    await bot.on_message(bob.message("archon drop"))
     with conftest.message(client_mock) as message:
         assert message == "<@234> dropped out"
-    await archon_bot.on_message(bob.message("archon checkin"))
+    await bot.on_message(bob.message("archon checkin"))
     with conftest.message(client_mock) as message:
         assert message == "<@234> checked in as Bob #2345678"
-    await archon_bot.on_message(
-        user_1.message("archon disqualify 2345678 inconsistent")
-    )
+    await bot.on_message(user_1.message("archon disqualify 2345678 inconsistent"))
     with conftest.message(client_mock) as message:
         assert message == "Player disqualifed"
-    await archon_bot.on_message(bob.message("archon checkin"))
+    await bot.on_message(bob.message("archon checkin"))
     with conftest.message(client_mock) as message:
         assert message == "You've been disqualified, you cannot check in again"
     # #################################################################### round results
-    await archon_bot.on_message(user_1.message("archon seat"))
+    await bot.on_message(user_1.message("archon seat"))
     with conftest.message(client_mock) as message:
         assert message == (
             "No table has reported their result yet, previous round cannot be closed. "
             "Use `archon unseat` to recompute a new seating."
         )
-    await archon_bot.on_message(user_1.message("archon results"))
+    await bot.on_message(user_1.message("archon results"))
     with conftest.message(client_mock) as message:
         assert message["title"] == "Round 1"
         assert message["description"] == "No table has reported their result yet."
-    await archon_bot.on_message(alice.message("archon report 4"))
+    await bot.on_message(alice.message("archon report 4"))
     with conftest.message(client_mock) as message:
         assert message == "Result registered."
-    await archon_bot.on_message(user_1.message("archon results"))
+    await bot.on_message(user_1.message("archon results"))
     with conftest.message(client_mock) as message:
         assert message["title"] == "Round 1"
         assert message["fields"][0]["name"] == "Table 1 INVALID"
         assert "Alice #1234567 <@123> (1GW4.0, 60TP)" in message["fields"][0]["value"]
-    await archon_bot.on_message(user_1.message("archon fix 1 3456789 1"))
+    await bot.on_message(user_1.message("archon fix 1 3456789 1"))
     with conftest.message(client_mock) as message:
         assert message == "Fixed"
-    await archon_bot.on_message(user_1.message("archon results"))
+    await bot.on_message(user_1.message("archon results"))
     with conftest.message(client_mock) as message:
         assert message["title"] == "Round 1"
         assert message["fields"][0]["name"] == "Table 1 OK"
         assert "Alice #1234567 <@123> (1GW4.0, 60TP)" in message["fields"][0]["value"]
         assert "Charles #3456789 <@345> (0GW1.0, 48TP)" in message["fields"][0]["value"]
     # ################################################################### check-in reset
-    await archon_bot.on_message(user_1.message("archon uncheck"))
+    await bot.on_message(user_1.message("archon uncheck"))
     with conftest.message(client_mock) as message:
         assert message == "Check in reset."
-    await archon_bot.on_message(user_1.message("archon status"))
+    await bot.on_message(user_1.message("archon status"))
     with conftest.message(client_mock) as message:
         assert message == (
             "**Testing It** (2R+F)\n"
@@ -264,29 +258,29 @@ async def test_tournament_sanctioned(client_mock):
             "0 players checked in\n"
             "Round 1 in progress"
         )
-    await archon_bot.on_message(alice.message("archon checkin"))
+    await bot.on_message(alice.message("archon checkin"))
     with conftest.message(client_mock) as message:
         assert message == "<@123> checked in as Alice #1234567"
-    await archon_bot.on_message(bob.message("archon checkin"))
+    await bot.on_message(bob.message("archon checkin"))
     with conftest.message(client_mock) as message:
         assert message == "You've been disqualified, you cannot check in again"
-    await archon_bot.on_message(charles.message("archon checkin 3456789"))
+    await bot.on_message(charles.message("archon checkin 3456789"))
     with conftest.message(client_mock) as message:
         assert message == "<@345> checked in as Charles #3456789"
-    await archon_bot.on_message(doug.message("archon checkin"))
+    await bot.on_message(doug.message("archon checkin"))
     with conftest.message(client_mock) as message:
         assert message == "<@456> checked in as Doug #4567890"
     emili2 = guild._create_member(678, "Emili")
-    await archon_bot.on_message(emili2.message("archon checkin"))
+    await bot.on_message(emili2.message("archon checkin"))
     with conftest.message(client_mock) as message:
         assert message == (
             "This tournament requires registration, please provide your VEKN ID."
         )
-    await archon_bot.on_message(emili2.message("archon checkin 5678901"))
+    await bot.on_message(emili2.message("archon checkin 5678901"))
     with conftest.message(client_mock) as message:
         assert message == "<@678> checked in as Emili #5678901"
     # ################################################################## seating round 2
-    await archon_bot.on_message(user_1.message("archon seat"))
+    await bot.on_message(user_1.message("archon seat"))
     with conftest.message(client_mock) as message:
         assert message["title"] == "Round 2 seating"
         assert len(message["fields"]) == 1
@@ -300,17 +294,17 @@ async def test_tournament_sanctioned(client_mock):
         assert doug._roles_names == {"TI-Table-1"}
         assert emili._roles_names == set()
         assert emili2._roles_names == {"TI-Table-1"}
-    await archon_bot.on_message(emili2.message("archon report 4"))
+    await bot.on_message(emili2.message("archon report 4"))
     with conftest.message(client_mock) as message:
         assert message == "Result registered."
-    await archon_bot.on_message(user_1.message("archon results"))
+    await bot.on_message(user_1.message("archon results"))
     with conftest.message(client_mock) as message:
         assert message["title"] == "Round 2"
         assert message["fields"][0]["name"] == "Table 1 OK"
         assert "Alice #1234567 <@123> (0GW0, 28TP)" in message["fields"][0]["value"]
         assert "Emili #5678901 <@678> (1GW4.0, 60TP)" in message["fields"][0]["value"]
     # ######################################################################## standings
-    await archon_bot.on_message(user_1.message("archon standings"))
+    await bot.on_message(user_1.message("archon standings"))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Standings",
@@ -323,7 +317,7 @@ async def test_tournament_sanctioned(client_mock):
             ),
         }
     # ########################################################################### finals
-    await archon_bot.on_message(user_1.message("archon seat"))
+    await bot.on_message(user_1.message("archon seat"))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Finals",
@@ -334,10 +328,10 @@ async def test_tournament_sanctioned(client_mock):
                 "- 4 Doug #4567890 <@456> (0GW0, 52TP)"
             ),
         }
-    await archon_bot.on_message(user_1.message("archon fix 3 4567890 1"))
+    await bot.on_message(user_1.message("archon fix 3 4567890 1"))
     with conftest.message(client_mock) as message:
         assert message == "Fixed"
-    await archon_bot.on_message(user_1.message("archon results"))
+    await bot.on_message(user_1.message("archon results"))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Finals",
@@ -348,10 +342,10 @@ async def test_tournament_sanctioned(client_mock):
                 "4. Doug #4567890 <@456>: 1.0VP\n"
             ),
         }
-    await archon_bot.on_message(user_1.message("archon fix 3 <@678> 3"))
+    await bot.on_message(user_1.message("archon fix 3 <@678> 3"))
     with conftest.message(client_mock) as message:
         assert message == "Fixed"
-    await archon_bot.on_message(user_1.message("archon results"))
+    await bot.on_message(user_1.message("archon results"))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Finals",
@@ -362,7 +356,7 @@ async def test_tournament_sanctioned(client_mock):
                 "4. Doug #4567890 <@456>: 1.0VP\n"
             ),
         }
-    await archon_bot.on_message(user_1.message("archon standings"))
+    await bot.on_message(user_1.message("archon standings"))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Standings",
@@ -375,7 +369,7 @@ async def test_tournament_sanctioned(client_mock):
             ),
         }
     # ########################################################################### report
-    await archon_bot.on_message(user_1.message("archon close"))
+    await bot.on_message(user_1.message("archon close"))
     with conftest.message(client_mock, all=True, with_params=True) as message:
         assert message[0][0] == "Reports"
         assert "files" in message[0][1]
@@ -428,9 +422,9 @@ async def test_tournament_sanctioned(client_mock):
 async def test_tournament_casual(client_mock):
     guild = conftest.Guild(client_mock)
     user_1 = guild._create_member(1, "user_1")
-    await archon_bot.on_ready()
+    await bot.on_ready()
 
-    await archon_bot.on_message(user_1.message("archon help"))
+    await bot.on_message(user_1.message("archon help"))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Archon help",
@@ -439,11 +433,11 @@ async def test_tournament_casual(client_mock):
             ),
         }
 
-    await archon_bot.on_message(user_1.message("archon"))
+    await bot.on_message(user_1.message("archon"))
     with conftest.message(client_mock) as message:
         assert message == "No tournament in progress. `archon open` to start one."
 
-    await archon_bot.on_message(user_1.message("archon open 2 Testing It"))
+    await bot.on_message(user_1.message("archon open 2 Testing It"))
     with conftest.message(client_mock) as message:
         assert message == "Tournament open"
 
@@ -452,26 +446,26 @@ async def test_tournament_casual(client_mock):
     charles = guild._create_member(345, "Charles")
     doug = guild._create_member(456, "Doug")
     emili = guild._create_member(567, "Emili")
-    await archon_bot.on_message(alice.message("archon checkin"))
+    await bot.on_message(alice.message("archon checkin"))
     with conftest.message(client_mock) as message:
         assert message == "<@123> checked in as #1"
-    await archon_bot.on_message(bob.message("archon checkin"))
+    await bot.on_message(bob.message("archon checkin"))
     with conftest.message(client_mock) as message:
         assert message == "<@234> checked in as #2"
-    await archon_bot.on_message(charles.message("archon checkin"))
+    await bot.on_message(charles.message("archon checkin"))
     with conftest.message(client_mock) as message:
         assert message == "<@345> checked in as #3"
-    await archon_bot.on_message(doug.message("archon checkin"))
+    await bot.on_message(doug.message("archon checkin"))
     with conftest.message(client_mock) as message:
         assert message == "<@456> checked in as #4"
-    await archon_bot.on_message(emili.message("archon checkin"))
+    await bot.on_message(emili.message("archon checkin"))
     with conftest.message(client_mock) as message:
         assert message == "<@567> checked in as #5"
-    await archon_bot.on_message(user_1.message("archon status"))
+    await bot.on_message(user_1.message("archon status"))
     with conftest.message(client_mock) as message:
         assert message == ("**Testing It** (2R+F)\n5 players checked in")
     # ################################################################## seating round 1
-    await archon_bot.on_message(user_1.message("archon seat"))
+    await bot.on_message(user_1.message("archon seat"))
     with conftest.message(client_mock) as message:
         assert message["title"] == "Round 1 seating"
         assert len(message["fields"]) == 1
@@ -483,37 +477,37 @@ async def test_tournament_casual(client_mock):
         assert charles._roles_names == {"TI-Table-1"}
         assert doug._roles_names == {"TI-Table-1"}
         assert emili._roles_names == {"TI-Table-1"}
-    await archon_bot.on_message(alice.message("archon report 4"))
+    await bot.on_message(alice.message("archon report 4"))
     with conftest.message(client_mock) as message:
         assert message == "Result registered."
-    await archon_bot.on_message(charles.message("archon report 1"))
+    await bot.on_message(charles.message("archon report 1"))
     with conftest.message(client_mock) as message:
         assert message == "Result registered."
     # ################################################################## seating round 2
-    await archon_bot.on_message(user_1.message("archon seat"))
+    await bot.on_message(user_1.message("archon seat"))
     with conftest.message(client_mock) as message:
         assert message["title"] == "Round 2 seating"
         assert len(message["fields"]) == 1
         assert message["fields"][0]["name"] == "Table 1"
         assert "#1 <@123>" in message["fields"][0]["value"]
         assert "#5 <@567>" in message["fields"][0]["value"]
-    await archon_bot.on_message(bob.message("archon report 3"))
+    await bot.on_message(bob.message("archon report 3"))
     with conftest.message(client_mock) as message:
         assert message == "Result registered."
-    await archon_bot.on_message(doug.message("archon report 2"))
+    await bot.on_message(doug.message("archon report 2"))
     with conftest.message(client_mock) as message:
         assert message == "Result registered."
     # ################################################################### seating finals
-    await archon_bot.on_message(user_1.message("archon seat"))
+    await bot.on_message(user_1.message("archon seat"))
     with conftest.message(client_mock) as message:
         assert message["title"] == "Finals"
-    await archon_bot.on_message(alice.message("archon report 2.5"))
+    await bot.on_message(alice.message("archon report 2.5"))
     with conftest.message(client_mock) as message:
         assert message == "Result registered."
-    await archon_bot.on_message(emili.message("archon report 1.5"))
+    await bot.on_message(emili.message("archon report 1.5"))
     with conftest.message(client_mock) as message:
         assert message == "Result registered."
-    await archon_bot.on_message(user_1.message("archon close"))
+    await bot.on_message(user_1.message("archon close"))
     with conftest.message(client_mock, all=True, with_params=True) as message:
         assert message[0][0] == "Reports"
         assert "files" in message[0][1]

@@ -8,7 +8,7 @@ import unittest
 import asyncio
 import pytest
 
-import archon_bot
+from archon_bot import db
 
 
 class Guild:
@@ -213,9 +213,9 @@ def async_test(func):
 
 @pytest.fixture()
 def client_mock():
-    with unittest.mock.patch("archon_bot.client", user=me) as obj:
+    with unittest.mock.patch("archon_bot.bot.client", user=me) as obj:
         yield obj
     try:
-        os.remove(f"archon-{archon_bot.version}.db")
+        os.remove(f"archon-{db.version}.db")
     except FileNotFoundError:
         pass

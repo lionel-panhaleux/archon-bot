@@ -14,7 +14,7 @@ import krcg.seating
 import krcg.utils
 
 
-from .db import CONNECTION
+from . import db
 from .tournament import Tournament
 from . import permissions as perm
 
@@ -43,14 +43,7 @@ class Command:
     def update(self):
         data = self.tournament.to_json()
         logger.debug("update %s: %s", self.guild.name, data)
-        cursor = self.connection.cursor()
-        cursor.execute(
-            "UPDATE tournament SET data=? WHERE active=1 AND guild=?",
-            [
-                data,
-                str(self.guild.id),
-            ],
-        )
+        db.update_tournament(self.connection, self.guild.id, data)
 
     async def send(self, message):
         rest = ""
@@ -106,33 +99,29 @@ class Command:
                 rindex = index
         return s[:index], s[rindex:]
 
-    async def _check_tournament(self):
+    def _check_tournament(self):
         if self.tournament:
             return
-        await self.send("No tournament in progress")
-        raise CommandFailed("Tournament required")
+        raise CommandFailed("No tournament in progress")
 
-    async def _check_judge(self, message=None):
-        await self._check_tournament()
+    def _check_judge(self, message=None):
+        self._check_tournament()
         judge_role = self.guild.get_role(self.tournament.judge_role)
         if judge_role in self.author.roles:
             return
-        await self.send(
-            message or f"Only a {judge_role.mention} can issue this command"
-        )
-        raise CommandFailed("Judge only")
+        message = message or f"Only a {judge_role.mention} can issue this command"
+        raise CommandFailed(message)
 
-    async def _check_judge_private(self):
-        await self._check_judge()
+    def _check_judge_private(self):
+        self._check_judge()
         judge_channel = self.guild.get_channel(
             self.tournament.channels[self.tournament.JUDGES_TEXT]
         )
         if self.channel.id == judge_channel.id:
             return
-        await self.send(
+        raise CommandFailed(
             f"This command can only be issued in the {judge_channel.mention} channel"
         )
-        raise CommandFailed("Only in the private judge channel")
 
     def _player_display(self, vekn):
         name = self.tournament.registered.get(vekn)
@@ -193,8 +182,9 @@ class Command:
 
     async def default(self, *args):
         if not self.tournament:
-            await self.send("No tournament in progress. `archon open` to start one.")
-            return
+            raise CommandFailed(
+                "No tournament in progress. Use `archon open` to start one."
+            )
         if self.tournament.registered and not self.tournament.finals_seeding:
             await self.send_embed(
                 discord.Embed(
@@ -222,8 +212,7 @@ class Command:
 
     async def open(self, rounds, *args):
         if self.tournament:
-            await self.send("Tournament already in progress")
-            return
+            raise CommandFailed("Tournament already in progress")
         self.tournament.name = " ".join(args)
         self.tournament.rounds = int(rounds)
         judge_role = await self.guild.create_role(name=f"{self.tournament.prefix}Judge")
@@ -232,14 +221,7 @@ class Command:
         )
         self.tournament.judge_role = judge_role.id
         self.tournament.spectator_role = spectator_role.id
-        connection = await CONNECTION.get()
-        cursor = connection.cursor()
-        cursor.execute(
-            "INSERT INTO tournament (active, guild, data) VALUES (1, ?, ?)",
-            [str(self.guild.id), self.tournament.to_json()],
-        )
-        connection.commit()
-        CONNECTION.put_nowait(connection)
+        await db.create_tournament(self.guild.id, self.tournament.to_json())
         await self.author.add_roles(
             judge_role, reason=f"{self.tournament.name} Tournament opened"
         )
@@ -268,7 +250,7 @@ class Command:
         await self.send("Tournament open")
 
     async def appoint(self, *args):
-        await self._check_judge()
+        self._check_judge()
         judge_role = self.guild.get_role(self.tournament.judge_role)
         for mention in self.message.mentions:
             member = self.guild.get_member(mention.id)
@@ -280,7 +262,7 @@ class Command:
         await self.send("Judge(s) appointed")
 
     async def spectator(self, *args):
-        await self._check_judge()
+        self._check_judge()
         spectator_role = self.guild.get_role(self.tournament.spectator_role)
         for mention in self.message.mentions:
             member = self.guild.get_member(mention.id)
@@ -292,7 +274,7 @@ class Command:
         await self.send("Spectator(s) appointed")
 
     async def register(self, vekn, *args):
-        await self._check_judge()
+        self._check_judge()
         vekn = vekn.strip("-").strip("#")
         name = " ".join(args)
         if not vekn:
@@ -302,7 +284,7 @@ class Command:
         await self.send(f"{name} registered with ID# {vekn}")
 
     async def status(self):
-        await self._check_tournament()
+        self._check_tournament()
         message = f"**{self.tournament.name}** ({self.tournament.rounds}R+F)"
         if self.tournament.registered:
             message += f"\n{len(self.tournament.registered)} players registered"
@@ -321,7 +303,7 @@ class Command:
         await self.channel.send(message)
 
     async def upload(self, *args):
-        await self._check_judge_private()
+        self._check_judge_private()
         data = await self.message.attachments[0].read()
         data = io.StringIO(data.decode("utf-8"))
         data.seek(0)
@@ -373,14 +355,13 @@ class Command:
             return True, result["firstname"] + " " + result["lastname"]
 
     async def allcheck(self):
-        await self._check_judge()
+        self._check_judge()
         if not self.tournament.registered:
-            await self.send(
+            raise CommandFailed(
                 "If you do not use checkin, "
                 "you need to provide a registrations list by using `archon upload` "
                 "or `archon register`."
             )
-            return
         self.tournament.players.update(
             {vekn: None for vekn in self.tournament.registered.keys()}
         )
@@ -388,24 +369,21 @@ class Command:
         await self.send("All registered players will play.")
 
     async def uncheck(self):
-        await self._check_judge()
+        self._check_judge()
         for vekn in self.tournament.players.keys():
             self._drop_player(vekn)
         self.update()
         await self.send("Check in reset.")
 
     async def checkin(self, vekn=None, mention=None):
-        await self._check_tournament()
+        self._check_tournament()
         vekn = vekn or ""
         vekn = vekn.strip("#")
         judge_role = self.guild.get_role(self.tournament.judge_role)
         if mention:
-            await self._check_judge(
-                f"Only a {judge_role.mention} can check in another user"
-            )
+            self._check_judge(f"Only a {judge_role.mention} can check in another user")
             if len(self.message.mentions) > 1:
-                await self.send("You must mention a single player.")
-                return
+                raise CommandFailed("You must mention a single player")
             judge = True
             member = self.message.mentions[0] if self.message.mentions else None
         else:
@@ -418,17 +396,15 @@ class Command:
             vekn = vekn or previous_vekn
         if self.tournament.registered:
             if not vekn:
-                await self.send(
+                raise CommandFailed(
                     "This tournament requires registration, "
                     "please provide your VEKN ID."
                 )
-                return
             if vekn not in self.tournament.registered:
-                await self.send(
+                raise CommandFailed(
                     "User not registered for that tournament.\n"
                     f"A {judge_role.mention} can use `archon register` to fix this."
                 )
-                return
         if not vekn:
             vekn = len(self.tournament.players) + 1
         if (
@@ -444,16 +420,14 @@ class Command:
                         "they will need to check in again."
                     )
                 else:
-                    await self.send(
+                    raise CommandFailed(
                         f"ID# already used by {other_member.mention},\n"
                         "they can `archon drop` so you can use this ID instead."
                     )
-                    return
         if judge:
             self.tournament.disqualified.discard(vekn)
         if vekn in self.tournament.disqualified:
-            await self.send("You've been disqualified, you cannot check in again")
-            return
+            raise CommandFailed("You've been disqualified, you cannot check in again.")
         self.tournament.dropped.discard(vekn)
         self.tournament.players[vekn] = member.id if member else None
         # late checkin
@@ -487,33 +461,33 @@ class Command:
                 permutation.remove(number)
 
     async def drop(self, *args):
-        await self._check_tournament()
+        self._check_tournament()
         author = self.message.author
-        vekn = await self._get_vekn(author.id)
+        vekn = self._get_vekn(author.id)
         self._drop_player(vekn)
         self.update()
         await self.send(f"{author.mention} dropped out")
 
-    async def _get_mentioned_player(self, vekn=None):
+    def _get_mentioned_player(self, vekn=None):
         mention = None
         if vekn not in self.tournament.players:
             vekn = None
         if len(self.message.mentions) > 1:
-            await self.send("You must mention a single player.")
-            raise CommandFailed("Single mention required")
+            raise CommandFailed("You must mention a single player.")
         if len(self.message.mentions) > 0:
             mention = self.message.mentions[0]
-            vekn = await self._get_vekn(mention.id)
+            vekn = self._get_vekn(mention.id)
         elif vekn not in self.tournament.players:
             vekn = None
         if not vekn:
-            await self.send("You must mention a player (Discord mention or ID number).")
-            raise CommandFailed("Player required")
+            raise CommandFailed(
+                "You must mention a player (Discord mention or ID number)."
+            )
         return mention.id if mention else None, vekn
 
     async def caution(self, *args):
-        await self._check_judge()
-        _, vekn = await self._get_mentioned_player(*args[:1])
+        self._check_judge()
+        _, vekn = self._get_mentioned_player(*args[:1])
         self.tournament.cautions.setdefault(vekn, [])
         if len(self.tournament.cautions[vekn]) > 0:
             await self.send(
@@ -530,8 +504,8 @@ class Command:
         await self.send("Player cautioned")
 
     async def warn(self, *args):
-        await self._check_judge()
-        _, vekn = await self._get_mentioned_player(*args[:1])
+        self._check_judge()
+        _, vekn = self._get_mentioned_player(*args[:1])
         self.tournament.warnings.setdefault(vekn, [])
         if len(self.tournament.warnings[vekn]) > 0:
             await self.send(
@@ -548,8 +522,8 @@ class Command:
         await self.send("Player warned")
 
     async def disqualify(self, *args):
-        await self._check_judge()
-        _, vekn = await self._get_mentioned_player(*args[:1])
+        self._check_judge()
+        _, vekn = self._get_mentioned_player(*args[:1])
         self.tournament.warnings.setdefault(vekn, [])
         self.tournament.warnings[vekn].append(
             [self.tournament.current_round, " ".join(args[1:])]
@@ -559,29 +533,29 @@ class Command:
         self.update()
         await self.send("Player disqualifed")
 
-    async def _get_player_number(self, vekn):
+    def _get_player_number(self, vekn):
+        if not self.tournament.seating:
+            raise CommandFailed("Tournament has not started")
         number = {v: k for k, v in self.tournament.player_numbers.items()}.get(vekn)
         if not number:
-            await self.send("Player has not checked in or tournament has not started")
-            raise CommandFailed("Player not in rounds")
+            raise CommandFailed("Player has not checked in")
         return number
 
-    async def _get_vekn(self, user_id):
-        await self._check_tournament()
+    def _get_vekn(self, user_id):
+        self._check_tournament()
         vekn = {v: k for k, v in self.tournament.players.items()}.get(user_id)
         if vekn:
             return vekn
         member = self.guild.get_member(user_id)
         if not member:
-            await self.send("User is not in server")
+            raise CommandFailed("User is not in server")
         else:
-            await self.send(f"{member.mention} has not checked in")
-        raise CommandFailed("Player not checked in")
+            raise CommandFailed(f"{member.mention} has not checked in")
 
     async def player(self, *args):
         await self._check_judge_private()
-        _user_id, vekn = await self._get_mentioned_player(*args[:1])
-        score, _winner = await self._get_total_scores(raise_on_incorrect=False)
+        _user_id, vekn = self._get_mentioned_player(*args[:1])
+        score, _winner = self._get_total_scores(raise_on_incorrect=False)
         score = score[vekn]
         embed = discord.Embed(title="Player Information", description="")
         embed.description = f"**{self._player_display(vekn)}**\n"
@@ -608,13 +582,13 @@ class Command:
         await self.send_embed(embed)
 
     async def players(self, *args):
-        await self._check_judge()
+        self._check_judge()
         judge_channel = self.guild.get_channel(
             self.tournament.channels[self.tournament.JUDGES_TEXT]
         )
         private = True if self.channel.id == judge_channel.id else False
 
-        scores, _winner = await self._get_total_scores(raise_on_incorrect=False)
+        scores, _winner = self._get_total_scores(raise_on_incorrect=False)
         embed = discord.Embed(title="Players list", description="")
         for vekn in self.tournament.players.keys():
             s = f"- {self._player_display(vekn)}"
@@ -629,7 +603,7 @@ class Command:
         await self.send_embed(embed)
 
     async def registrations(self, *args):
-        await self._check_judge_private()
+        self._check_judge_private()
         embed = discord.Embed(title="Registrations", description="")
         for vekn in sorted(self.tournament.registered.keys()):
             s = f"- {self._player_display(vekn)}"
@@ -641,28 +615,25 @@ class Command:
             embed.description += s + "\n"
         await self.send_embed(embed)
 
-    async def _check_current_round_modifiable(self):
-        await self._check_tournament()
+    def _check_current_round_modifiable(self):
+        self._check_tournament()
         if not self.tournament.current_round:
-            await self.send("No seating has been done yet.")
-            raise CommandFailed("Seating required")
+            raise CommandFailed("No seating has been done yet")
         index = self.tournament.current_round - 1
         if len(self.tournament.results) > index and self.tournament.results[index]:
-            await self.send(
+            raise CommandFailed(
                 "Some tables have reported their result, unable to modify seating."
             )
-            raise CommandFailed("Results reported")
 
-    async def _get_total_scores(self, raise_on_incorrect=True):
+    def _get_total_scores(self, raise_on_incorrect=True):
         winner = None
         scores = collections.defaultdict(lambda: [0, 0, 0, 0])
         for i in range(len(self.tournament.seating)):
             round_result, _, incorrect = self.tournament._compute_round_result(i)
             if raise_on_incorrect and incorrect:
-                await self.send(
+                raise CommandFailed(
                     f"Incorrect results for round {i + 1} tables {incorrect}"
                 )
-                raise CommandFailed("Incorrect score")
             for player, score in round_result.items():
                 scores[player][0] += score[0]
                 scores[player][1] += score[1]
@@ -682,24 +653,22 @@ class Command:
         return scores, winner
 
     async def seat(self):
-        await self._check_judge()
+        self._check_judge()
         if self.tournament.current_round:
             index = self.tournament.current_round - 1
             if len(self.tournament.results) <= index:
-                await self.send(
+                raise CommandFailed(
                     "No table has reported their result yet, "
                     "previous round cannot be closed. "
                     "Use `archon unseat` to recompute a new seating."
                 )
-                return
             round_result, _, incorrect = self.tournament._compute_round_result(index)
             if incorrect:
-                await self.send(
+                raise CommandFailed(
                     f"Tables {', '.join(map(str, incorrect))} "
                     "have incorrect results, "
                     "previous round cannot be closed."
                 )
-                return
         await self._remove_tables()
         if not self.tournament.seating:
             self.tournament.seating = krcg.seating.permutations(
@@ -714,7 +683,7 @@ class Command:
         spectator_role = self.guild.get_role(self.tournament.spectator_role)
         # finals
         if self.tournament.finals:
-            scores, _ = await self._get_total_scores()
+            scores, _ = self._get_total_scores()
             table_role = await self.guild.create_role(
                 name=f"{self.tournament.prefix}Finals"
             )
@@ -788,12 +757,11 @@ class Command:
             await messages[0].pin()
             return
         if self.tournament.current_round > len(permutations) + 1:
-            await self.send(
+            raise CommandFailed(
                 "All rounds have been played, "
                 "use `archon close` to finish the tournament "
                 "or `archon unseat` to cancel last round seating arrangement."
             )
-            return
         # normal round
         if self.tournament.current_round > 1:
             embed = discord.Embed(
@@ -880,9 +848,9 @@ class Command:
         asyncio.gather(*(m.pin() for m in messages))
 
     async def standings(self):
-        await self._check_judge()
+        self._check_judge()
         embed = discord.Embed(title="Standings")
-        scores, winner = await self._get_total_scores(raise_on_incorrect=False)
+        scores, winner = self._get_total_scores(raise_on_incorrect=False)
         results = []
         last = [math.nan] * 3
         place = 1
@@ -909,10 +877,9 @@ class Command:
         await self.send_embed(embed)
 
     async def results(self):
-        await self._check_judge()
+        self._check_judge()
         if not self.tournament.current_round:
-            await self.send("No seating has been done yet.")
-            return
+            raise CommandFailed("No seating has been done yet.")
         if (
             self.tournament.finals_seeding
             and len(self.tournament.results) > self.tournament.rounds
@@ -948,30 +915,27 @@ class Command:
             await self.send_embed(embed)
 
     async def unseat(self):
-        await self._check_judge()
+        self._check_judge()
         await self._remove_tables()
-        await self._check_current_round_modifiable()
+        self._check_current_round_modifiable()
         self.tournament.current_round -= 1
         self.tournament.finals_seeding = []
         self.update()
-        await self.send("Seating cancelled.")
+        await self.send("Seating cancelled")
 
     async def add(self, *args):
-        await self._check_judge()
-        await self._check_current_round_modifiable()
-        user_id, vekn = await self._get_mentioned_player(*args[:1])
+        self._check_judge()
+        self._check_current_round_modifiable()
+        user_id, vekn = self._get_mentioned_player(*args[:1])
         id_to_number = {v: k for k, v in self.tournament.player_numbers.items()}
         number = id_to_number.get(vekn)
         if not number:
-            await self.send("Player not properly registered")
-            return
+            raise CommandFailed("Player not properly registered")
         member = self.guild.get_member(user_id)
         if not member:
-            await self.send("Player not in server")
-            return
+            raise CommandFailed("Player not in server")
         if vekn in self.tournament.disqualified:
-            await self.semd("Player is disqualified")
-            return
+            raise CommandFailed("Player is disqualified")
         index = self.tournament.current_round - 1
         tables = self.tournament._get_round_tables(index)
         for i, table in enumerate(tables, 1):
@@ -988,8 +952,7 @@ class Command:
                     )
                     break
             else:
-                await self.send("Table role not found")
-                return
+                raise CommandFailed("Table role not found")
             self.update()
             await self.send(f"Player seated 5th on table {i}")
             break
@@ -1013,43 +976,38 @@ class Command:
             )
         )
 
-    async def _check_round(self, round=None):
+    def _check_round(self, round=None):
         if not self.tournament.current_round:
-            await self.send("Tournament has not begun")
-            raise CommandFailed("No current round")
+            raise CommandFailed("Tournament has not begun")
         if len(self.tournament.results) < self.tournament.current_round:
             self.tournament.results.append({})
         if round and len(self.tournament.results) < round:
-            await self.send("Invalid round number")
-            raise CommandFailed("Bad round number")
+            raise CommandFailed("Invalid round number")
 
     async def report(self, vps):
         vps = float(vps.replace(",", "."))
-        vekn = await self._get_vekn(self.message.author.id)
-        await self._check_round()
+        vekn = self._get_vekn(self.message.author.id)
+        self._check_round()
         index = self.tournament.current_round - 1
         if self.tournament.finals:
             if vekn not in self.tournament.finals_seeding:
-                await self.send("You did not participate in the finals")
-                return
+                raise CommandFailed("You did not participate in the finals")
         elif vekn not in [
             self.tournament.player_numbers[n] for n in self.tournament.seating[index]
         ]:
-            await self.send("You did not participate in this round")
-            return
+            raise CommandFailed("You did not participate in this round")
         if vps > 5:
-            await self.send("That seems like too many VPs")
-            return
+            raise CommandFailed("That seems like too many VPs")
         self.tournament.results[index][vekn] = vps
         self.update()
-        await self.send("Result registered.")
+        await self.send("Result registered")
 
     async def fix(self, round, vekn, vps):
         round = int(round)
         vps = float(vps)
-        _, vekn = await self._get_mentioned_player(vekn)
-        await self._check_judge()
-        await self._check_round(round)
+        _, vekn = self._get_mentioned_player(vekn)
+        self._check_judge()
+        self._check_round(round)
         results = self.tournament.results[round - 1]
         if vps <= 0:
             results.pop(vekn, None)
@@ -1062,21 +1020,20 @@ class Command:
         round = int(round)
         table = int(table)
         reason = " ".join(args)
-        await self._check_judge()
-        await self._check_round(round)
+        self._check_judge()
+        self._check_round(round)
         self.tournament.overrides[f"{round}-{table}"] = reason
         self.update()
         await self.send("Validated")
 
     async def close(self):
-        await self._check_judge()
+        self._check_judge()
         if self.channel.id in self.tournament.channels.values():
-            await self.send(
+            raise CommandFailed(
                 "The `close` command must be issued outside of tournament channels"
             )
-            return
         reports = []
-        scores, winner = await self._get_total_scores(raise_on_incorrect=False)
+        scores, winner = self._get_total_scores(raise_on_incorrect=False)
         results = []
         last = [math.nan] * 3
         rank = 1
@@ -1099,7 +1056,7 @@ class Command:
                 ):
                     rank = j
             last = score[:3]
-            number = await self._get_player_number(vekn)
+            number = self._get_player_number(vekn)
             finals_position = ""
             if vekn in self.tournament.finals_seeding:
                 finals_position = self.tournament.finals_seeding.index(vekn) + 1
@@ -1233,13 +1190,7 @@ class Command:
                 if role.name.startswith(self.tournament.prefix)
             )
         )
-        cursor = self.connection.cursor()
-        cursor.execute(
-            "UPDATE tournament SET active=0 WHERE active=1 AND guild=?",
-            [
-                str(self.guild.id),
-            ],
-        )
+        db.close_tournament(self.connection, self.guild.id)
         logger.info("closed tournament in %s", self.guild.name)
         await self.send("Tournament closed")
 

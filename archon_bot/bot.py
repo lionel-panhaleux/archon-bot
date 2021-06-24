@@ -8,7 +8,7 @@ import discord
 
 
 from .commands import Command, CommandFailed
-from .db import CONNECTION, init
+from . import db
 
 #: Lock for write operations
 LOCKS = collections.defaultdict(asyncio.Lock)
@@ -34,7 +34,7 @@ client = discord.Client(
 async def on_ready():
     """Login success informative log."""
     logger.info("Logged in as %s", client.user)
-    await init()
+    await db.init()
 
 
 @client.event
@@ -81,40 +81,16 @@ async def on_message(message: discord.Message):
         await message.channel.send("Archon cannot be used in a private channel.")
         return
     try:
-        await _execute(command, message, update, *content[1:])
-    except CommandFailed:
-        pass
+        async with db.tournament(message.guild.id, update) as (connection, tournament):
+            instance = Command(connection, message, tournament)
+            await command(instance, *content[1:])
+    except CommandFailed as exc:
+        logger.exception("Command failed: %s")
+        if exc.args:
+            await message.channel.send(exc.args[0], reference=message)
     except Exception:
-        logger.exception("Command failed %s", content)
+        logger.exception("Command failed: %s", content)
         await message.channel.send("Command error. Use `archon help` to display help.")
-
-
-async def _execute(command, message, update, *args):
-    """Execute a command - handle DB transactions and asyncio lock."""
-    connection = await CONNECTION.get()
-    try:
-        if update:
-            await LOCKS[message.channel.guild.id].acquire()
-        cursor = connection.cursor()
-        cursor.execute(
-            "SELECT data from tournament WHERE active=1 AND guild=?",
-            [str(message.channel.guild.id)],
-        )
-        tournament = cursor.fetchone()
-        if tournament:
-            instance = Command(connection, message, tournament[0])
-        else:
-            instance = Command(connection, message)
-        await command(instance, *args)
-    except:  # noqa: E722
-        connection.rollback()
-        raise
-    else:
-        connection.commit()
-    finally:
-        CONNECTION.put_nowait(connection)
-        if update:
-            LOCKS[message.channel.guild.id].release()
 
 
 def main():

@@ -1,12 +1,11 @@
+import asyncio
 import contextlib
 import functools
 import io
 import os
+import pytest
 import re
 import unittest
-
-import asyncio
-import pytest
 
 from archon_bot import db
 

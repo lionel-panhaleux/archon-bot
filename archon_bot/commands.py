@@ -793,7 +793,6 @@ class Command:
         round = krcg.seating.Round(
             self.tournament.seating[self.tournament.current_round - 1]
         )
-        embed = discord.Embed(title=f"Round {self.tournament.current_round} seating")
         if not self.tournament.player_numbers:
             players = list(
                 set(self.tournament.players.keys()) - self.tournament.dropped
@@ -804,46 +803,81 @@ class Command:
             for vekn in self.tournament.dropped:
                 number = len(self.tournament.player_numbers) + 1
                 self.tournament.player_numbers[number] = vekn
+        table_roles = await asyncio.gather(
+            *(
+                self.guild.create_role(name=f"{self.tournament.prefix}Table-{i + 1}")
+                for i in range(len(round))
+            )
+        )
+        text_channels = await asyncio.gather(
+            *(
+                self.guild.create_text_channel(
+                    name=f"Table {i + 1}",
+                    category=self.category,
+                    overwrites={
+                        self.guild.default_role: perm.NO_TEXT,
+                        spectator_role: perm.SPECTATE_TEXT,
+                        table_roles[i]: perm.TEXT,
+                        judge_role: perm.TEXT,
+                    },
+                )
+                for i in range(len(round))
+            )
+        )
+        self.tournament.channels.update(
+            {
+                f"table-{i}-text": channel.id
+                for i, channel in enumerate(text_channels, 1)
+            }
+        )
+        voice_channels = await asyncio.gather(
+            *(
+                self.guild.create_voice_channel(
+                    name=f"Table {i + 1}",
+                    category=self.category,
+                    overwrites={
+                        self.guild.default_role: perm.NO_VOICE,
+                        spectator_role: perm.SPECTATE_VOICE,
+                        table_roles[i]: perm.VOICE,
+                        judge_role: perm.JUDGE_VOICE,
+                    },
+                )
+                for i in range(len(round))
+            )
+        )
+        self.tournament.channels.update(
+            {
+                f"table-{i}-voice": channel.id
+                for i, channel in enumerate(voice_channels, 1)
+            }
+        )
+        members = {
+            n: self.guild.get_member(
+                self.tournament.players[self.tournament.player_numbers[n]]
+            )
+            for table in round
+            for n in table
+        }
+        await asyncio.gather(
+            *(
+                members[n].add_roles(
+                    table_roles[i], reason=f"{self.tournament.name} Tournament seating"
+                )
+                for i, table in enumerate(round)
+                for n in table
+                if members[n]
+            )
+        )
+        embed = discord.Embed(title=f"Round {self.tournament.current_round} seating")
         for i, table in enumerate(round, 1):
-            players = []
-            table_role = await self.guild.create_role(
-                name=f"{self.tournament.prefix}Table-{i}"
-            )
-            await self.guild.me.add_roles(
-                table_role, reason=f"{self.tournament.name} Tournament seating"
-            )
-            for j, n in enumerate(table, 1):
-                vekn = self.tournament.player_numbers[n]
-                user_id = self.tournament.players[vekn]
-                member = self.guild.get_member(user_id)
-                players.append(f"- {j}. {self._player_display(vekn)}"[:200])
-                if member:
-                    await member.add_roles(
-                        table_role, reason=f"{self.tournament.name} Tournament seating"
-                    )
-            embed.add_field(name=f"Table {i}", value="\n".join(players), inline=False)
-            channel = await self.guild.create_text_channel(
+            embed.add_field(
                 name=f"Table {i}",
-                category=self.category,
-                overwrites={
-                    self.guild.default_role: perm.NO_TEXT,
-                    spectator_role: perm.SPECTATE_TEXT,
-                    table_role: perm.TEXT,
-                    judge_role: perm.TEXT,
-                },
+                value="\n".join(
+                    f"- {j}. {self._player_display(vekn)}"[:200]
+                    for j, n in enumerate(table, 1)
+                ),
+                inline=False,
             )
-            self.tournament.channels[f"table-{i}-text"] = channel.id
-            channel = await self.guild.create_voice_channel(
-                name=f"Table {i}",
-                category=self.category,
-                overwrites={
-                    self.guild.default_role: perm.NO_VOICE,
-                    spectator_role: perm.SPECTATE_VOICE,
-                    table_role: perm.VOICE,
-                    judge_role: perm.JUDGE_VOICE,
-                },
-            )
-            self.tournament.channels[f"table-{i}-vocal"] = channel.id
         self.update()
         messages = await self.send_embed(embed)
         asyncio.gather(*(m.pin() for m in messages))

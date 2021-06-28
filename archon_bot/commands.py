@@ -155,8 +155,8 @@ class Command:
         if self.guild.get_role(self.tournament.judge_role) in self.author.roles:
             embed.description += """
 **Judge commands**
-- `archon appoint [@user]`: appoint user as judge
-- `archon spectator [@user]`: appoint user as spectator
+- `archon appoint [@user] (...[@user])`: appoint users as judges
+- `archon spectator [@user] (...[@user])`: appoint users as spectators
 - `archon register [ID#] [Full Name]`: register a user (Use `-` for auto ID)
 - `archon checkin [ID#] [@user]`: check user in (even if disqualified)
 - `archon uncheck`: reset check-in
@@ -167,6 +167,7 @@ class Command:
 - `archon unseat`: Rollback the round seating
 - `archon results`: check current round results
 - `archon standings`: Display current standings
+- `archon caution [@player | ID#] [Reason]`: Issue a caution to a player
 - `archon warn [@player | ID#] [Reason]`: Issue a warning to a player
 - `archon disqualify [@player | ID#] [Reason]`: Disqualify a player
 - `archon close`: Close current tournament

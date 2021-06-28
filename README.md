@@ -6,6 +6,7 @@ Discord bot for VTES tournament management.
 
 ## TODO
 
+-   Optimise channels creations when doing the seating
 -   Add message with seating in each table channel
 -   Ability to switch the default archon message for the judges
 -   Activate / deactivate checkin - might replace previous one

@@ -185,7 +185,8 @@ async def test_tournament_sanctioned(client_mock):
         )
     # ################################################################## seating round 1
     await bot.on_message(user_1.message("archon seat"))
-    with conftest.message(client_mock) as message:
+    with conftest.message(client_mock, all=True) as messages:
+        message = messages[0]
         assert message["title"] == "Round 1 seating"
         assert len(message["fields"]) == 1
         assert message["fields"][0]["name"] == "Table 1"
@@ -196,6 +197,10 @@ async def test_tournament_sanctioned(client_mock):
         assert charles._roles_names == {"TI-Table-1"}
         assert doug._roles_names == {"TI-Table-1"}
         assert emili._roles_names == {"TI-Table-1"}
+        message = messages[1]
+        assert message["title"] == "Seating"
+        assert "Alice #1234567 <@123>" in message["description"]
+        assert "Emili #5678901 <@567>" in message["description"]
     # ############################################################### warnings, drop, DQ
     await bot.on_message(user_1.message("archon warn 2345678 slow play"))
     with conftest.message(client_mock) as message:
@@ -284,7 +289,11 @@ async def test_tournament_sanctioned(client_mock):
         assert message == "<@678> checked in as Emili #5678901"
     # ################################################################## seating round 2
     await bot.on_message(user_1.message("archon seat"))
-    with conftest.message(client_mock) as message:
+    with conftest.message(client_mock, all=True) as messages:
+        message = messages[0]
+        assert message["title"] == "Round 2 - computing seating"
+        assert message["description"] == "▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁"
+        message = messages[-2]
         assert message["title"] == "Round 2 seating"
         assert len(message["fields"]) == 1
         assert message["fields"][0]["name"] == "Table 1"
@@ -469,7 +478,8 @@ async def test_tournament_casual(client_mock):
         assert message == ("**Testing It** (2R+F)\n5 players checked in")
     # ################################################################## seating round 1
     await bot.on_message(user_1.message("archon seat"))
-    with conftest.message(client_mock) as message:
+    with conftest.message(client_mock, all=True) as messages:
+        message = messages[0]
         assert message["title"] == "Round 1 seating"
         assert len(message["fields"]) == 1
         assert message["fields"][0]["name"] == "Table 1"
@@ -480,6 +490,10 @@ async def test_tournament_casual(client_mock):
         assert charles._roles_names == {"TI-Table-1"}
         assert doug._roles_names == {"TI-Table-1"}
         assert emili._roles_names == {"TI-Table-1"}
+        message = messages[1]
+        assert message["title"] == "Seating"
+        assert "#1 <@123>" in message["description"]
+        assert "#5 <@567>" in message["description"]
     await bot.on_message(alice.message("archon report 4"))
     with conftest.message(client_mock) as message:
         assert message == "Result registered"
@@ -488,7 +502,11 @@ async def test_tournament_casual(client_mock):
         assert message == "Result registered"
     # ################################################################## seating round 2
     await bot.on_message(user_1.message("archon seat"))
-    with conftest.message(client_mock) as message:
+    with conftest.message(client_mock, all=True) as messages:
+        message = messages[0]
+        assert message["title"] == "Round 2 - computing seating"
+        assert message["description"] == "▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁"
+        message = messages[-2]
         assert message["title"] == "Round 2 seating"
         assert len(message["fields"]) == 1
         assert message["fields"][0]["name"] == "Table 1"

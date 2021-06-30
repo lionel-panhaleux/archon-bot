@@ -868,19 +868,34 @@ class Command:
                 if members[n]
             )
         )
+        n_to_vekn = self.tournament.player_numbers
         embed = discord.Embed(title=f"Round {self.tournament.current_round} seating")
         for i, table in enumerate(round, 1):
             embed.add_field(
                 name=f"Table {i}",
                 value="\n".join(
-                    f"- {j}. {self._player_display(vekn)}"[:200]
+                    f"- {j}. {self._player_display(n_to_vekn[n])}"[:200]
                     for j, n in enumerate(table, 1)
                 ),
                 inline=False,
             )
         self.update()
         messages = await self.send_embed(embed)
-        asyncio.gather(*(m.pin() for m in messages))
+        await asyncio.gather(*(m.pin() for m in messages))
+        await asyncio.gather(
+            *(
+                text_channels[i].send(
+                    embed=discord.Embed(
+                        title="Seating",
+                        description="\n".join(
+                            f"- {j}. {self._player_display(n_to_vekn[n])}"[:200]
+                            for j, n in enumerate(table, 1)
+                        ),
+                    )
+                )
+                for i, table in enumerate(round)
+            )
+        )
 
     async def standings(self):
         self._check_judge()

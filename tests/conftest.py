@@ -6,6 +6,7 @@ import os
 import pytest
 import re
 import unittest
+import unittest.mock
 
 from archon_bot import db
 

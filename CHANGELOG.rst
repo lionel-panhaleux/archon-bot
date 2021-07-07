@@ -1,7 +1,7 @@
 0.2 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Fix main
 
 
 0.1 (2021-07-07)

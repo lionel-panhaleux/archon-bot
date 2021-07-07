@@ -10,7 +10,7 @@ Discord bot for V:TES tournament management.
 [Add it to your server](https://discordapp.com/oauth2/authorize?client_id=862326826193518622&scope=bot&permissions=401730896)
 
 The bot requires quite a few permissions to create roles and channels properly.
-Please do not tinker with the list of reuiqred permissions and grant them all
+Please do not tinker with the list of required permissions and grant them all
 if you want the bot to run properly on your server.
 
 ## Cheatsheet
@@ -74,7 +74,7 @@ to the players in the table channels:
 archon appoint @timer @krcg
 ```
 
-Tou can optionally add some spectators:
+You can optionally add some spectators:
 
 ```
 archon spectator @some_guest
@@ -148,7 +148,7 @@ archon fix @mistaken_player 2
 ```
 
 Once everything is OK, you can close the round, no more VP report will be accepted.
-This step is optional you can also proceed to the next round directly.
+This step is optional: you can also proceed to the next round directly.
 
 ```
 archon round-finish
@@ -293,7 +293,7 @@ in the `#Judges` private channel:
 archon registrations
 ```
 
-Note it you want to check VEKN IDs programatically, this package includes a small
+Note if you want to check VEKN IDs programatically, this package includes a small
 script for this. You'll need the python `aiohttp` package installed:
 
 ```bash
@@ -394,7 +394,7 @@ archon finals
 
 ### Staggered tournament (6, 7 & 11 players)
 
-A V:TES seating can accomdate any number of players,
+A V:TES seating can accomodate any number of players,
 except if you have 6, 7 or 11 players. In this situation, the `archon round-start`
 command will yield an error because it cannot get a table for everyone.
 You should either have some players drop out or additional players check in.
@@ -412,8 +412,6 @@ the bot will prepare 3 rounds where some players are left out of each round.
 To play 3 rounds, it will prepare 4 or 5 rounds depending on the number of players.
 You cannot setup a staggered tournament with more than 10 rounds played by player.
 
----
-
 Beware that once you go for a staggered tournament,
 no player can be added or removed between rounds. This means **check-in, drop out
 and disqualifications are disabled** once you're in a staggered tournament.
@@ -423,19 +421,19 @@ and disqualifications are disabled** once you're in a staggered tournament.
 Although the archon bot is primarily intended for online play, you can
 use it to run an offline tournament too.
 
-You can register the player as they come in as usual:
+You can register the player as they come as usual:
 
 ```
 archon register 1000123 Alice Allister
 ```
 
-Once registrations are closed, you can just check-in all players yourself:
+Once registrations are closed, you can just check all players in yourself:
 
 ```
 archon checkin-all
 ```
 
-The run your rounds normally:
+Then run your rounds normally:
 
 ```
 archon round-start

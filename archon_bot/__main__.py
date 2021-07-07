@@ -1,3 +1,3 @@
-from . import bot
+from . import main
 
-bot.main()
+main()

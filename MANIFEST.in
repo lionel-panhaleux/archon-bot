@@ -3,7 +3,8 @@ include LICENSE README.md CHANGELOG.rst
 graft archon_bot
 prune tests
 exclude Makefile
-exclude bot-example.png
+exclude .markdownlint.json
+exclude check-vekn.py
 
 global-exclude */__pycache__/*
 global-exclude *.egg-info/*

@@ -32,36 +32,54 @@ async def init():
     connection = await CONNECTION.get()
     cursor = connection.cursor()
     cursor.execute(
-        "CREATE TABLE IF NOT EXISTS tournament(active INTEGER, guild TEXT, data json)"
+        "CREATE TABLE IF NOT EXISTS tournament("
+        "active INTEGER, "
+        "prefix TEXT, "
+        "guild TEXT, "
+        "category TEXT, "
+        "data json)"
     )
     connection.commit()
     CONNECTION.put_nowait(connection)
 
 
-async def create_tournament(guild_id, tournament_data):
-    connection = await CONNECTION.get()
+def create_tournament(connection, prefix, guild_id, category_id, tournament_data):
     cursor = connection.cursor()
     cursor.execute(
-        "INSERT INTO tournament (active, guild, data) VALUES (1, ?, ?)",
-        [str(guild_id), tournament_data],
+        "INSERT INTO tournament (active, prefix, guild, category, data) "
+        "VALUES (1, ?, ?, ?, ?)",
+        [
+            prefix,
+            str(guild_id),
+            str(category_id) if category_id else "",
+            tournament_data,
+        ],
     )
-    connection.commit()
-    CONNECTION.put_nowait(connection)
 
 
-def update_tournament(connection, guild_id, tournament_data):
+def get_active_prefixes(connection, guild_id):
     cursor = connection.cursor()
     cursor.execute(
-        "UPDATE tournament SET data=? WHERE active=1 AND guild=?",
+        "SELECT prefix FROM tournament WHERE active=1 AND guild=?",
+        [str(guild_id)],
+    )
+    return set(r[0] for r in cursor)
+
+
+def update_tournament(connection, guild_id, category_id, tournament_data):
+    cursor = connection.cursor()
+    cursor.execute(
+        "UPDATE tournament SET data=? WHERE active=1 AND guild=? AND category=?",
         [
             tournament_data,
             str(guild_id),
+            str(category_id) if category_id else "",
         ],
     )
 
 
 @contextlib.asynccontextmanager
-async def tournament(guild_id, update=False):
+async def tournament(guild_id, category_id, update=False):
     """Context manager to access a tournament object.
 
     Handles DB transactions (commit, rollback) and asyncio lock for write operations
@@ -69,11 +87,11 @@ async def tournament(guild_id, update=False):
     connection = await CONNECTION.get()
     try:
         if update:
-            await LOCKS[guild_id].acquire()
+            await LOCKS[guild_id, category_id].acquire()
         cursor = connection.cursor()
         cursor.execute(
-            "SELECT data from tournament WHERE active=1 AND guild=?",
-            [str(guild_id)],
+            "SELECT data from tournament WHERE active=1 AND guild=? AND category=?",
+            [str(guild_id), str(category_id) if category_id else ""],
         )
         tournament = cursor.fetchone()
         if tournament:
@@ -88,14 +106,12 @@ async def tournament(guild_id, update=False):
     finally:
         CONNECTION.put_nowait(connection)
         if update:
-            LOCKS[guild_id].release()
+            LOCKS[guild_id, category_id].release()
 
 
-def close_tournament(connection, guild_id):
+def close_tournament(connection, guild_id, category_id):
     cursor = connection.cursor()
     cursor.execute(
-        "UPDATE tournament SET active=0 WHERE active=1 AND guild=?",
-        [
-            str(guild_id),
-        ],
+        "UPDATE tournament SET active=0 WHERE active=1 AND guild=? AND category=?",
+        [str(guild_id), str(category_id) if category_id else ""],
     )

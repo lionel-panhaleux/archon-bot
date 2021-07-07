@@ -7,7 +7,7 @@ import os
 import discord
 
 
-from .commands import Command, CommandFailed
+from .commands import COMMANDS, CommandFailed
 from . import db
 
 #: Lock for write operations
@@ -42,48 +42,25 @@ async def on_message(message: discord.Message):
     """Main message loop."""
     if message.author == client.user:
         return
-
     if not message.content.lower().startswith("archon"):
         return
     logging.info('%s said: "%s"', message.author.display_name, message.content)
     content = message.content[6:].split()
-    command, update = {
-        "help": (Command.help, True),
-        "open": (Command.open, True),
-        "status": (Command.status, False),
-        "checkin": (Command.checkin, True),
-        "report": (Command.report, True),
-        "drop": (Command.drop, True),
-        "appoint": (Command.appoint, False),
-        "spectator": (Command.spectator, False),
-        "register": (Command.register, False),
-        "allcheck": (Command.allcheck, True),
-        "uncheck": (Command.uncheck, True),
-        "upload": (Command.upload, True),
-        "seat": (Command.seat, True),
-        "add": (Command.add, True),
-        "unseat": (Command.unseat, True),
-        "players": (Command.players, False),
-        "player": (Command.player, False),
-        "registrations": (Command.registrations, False),
-        "results": (Command.results, False),
-        "standings": (Command.standings, False),
-        "fix": (Command.fix, True),
-        "validate": (Command.validate, True),
-        "caution": (Command.caution, True),
-        "warn": (Command.warn, True),
-        "disqualify": (Command.disqualify, True),
-        "close": (Command.close, True),
-    }.get(content[0].lower() if content else "", (None, False))
-    if not command:
-        command = Command.default
+    command = COMMANDS.get(content[0].lower() if content else "", COMMANDS["help"])
     if not getattr(message.channel, "guild", None):
         await message.channel.send("Archon cannot be used in a private channel.")
         return
     try:
-        async with db.tournament(message.guild.id, update) as (connection, tournament):
-            instance = Command(connection, message, tournament)
-            await command(instance, *content[1:])
+        async with db.tournament(
+            message.channel.guild.id,
+            message.channel.category.id if message.channel.category else None,
+            command.UPDATE,
+        ) as (
+            connection,
+            tournament,
+        ):
+            instance = command(connection, message, tournament)
+            await instance(*content[1:])
     except CommandFailed as exc:
         logger.exception("Command failed: %s")
         if exc.args:

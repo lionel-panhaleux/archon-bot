@@ -9,13 +9,14 @@ import random
 
 import asgiref.sync
 import discord
+import stringcase
 
 import krcg.seating
 import krcg.utils
 
 
 from . import db
-from .tournament import Tournament
+from . import tournament
 from . import permissions as perm
 
 logger = logging.getLogger()
@@ -28,8 +29,27 @@ class CommandFailed(Exception):
     """A "normal" failure: an answer explains why the command was not performed"""
 
 
-class Command:
-    """Bot Commands implementations."""
+COMMANDS = {}
+
+
+class MetaCommand(type):
+    """Metaclass to register commands."""
+
+    def __new__(cls, name, bases, dict_):
+        command_name = stringcase.spinalcase(name)
+        if command_name in COMMANDS:
+            raise ValueError(f"Command {name} is already registered")
+        if command_name == "command":
+            command_name = ""
+        COMMANDS[command_name] = super().__new__(cls, name, bases, dict_)
+        return COMMANDS[command_name]
+
+
+class Command(metaclass=MetaCommand):
+    """Base class for all caommnds, implements the default `archon` command."""
+
+    #: The command does not update the tournament data. Override in children as needed.
+    UPDATE = False
 
     def __init__(self, connection, message, data=None):
         self.connection = connection
@@ -38,14 +58,24 @@ class Command:
         self.channel = self.message.channel
         self.guild = self.channel.guild
         self.category = self.channel.category
-        self.tournament = Tournament(**(data or {}))
+        self.tournament = tournament.Tournament(**(data or {}))
+        self.scores = collections.defaultdict(tournament.Score)
+        self.winner = None
 
     def update(self):
+        """Update tournament data."""
+        assert self.UPDATE
         data = self.tournament.to_json()
         logger.debug("update %s: %s", self.guild.name, data)
-        db.update_tournament(self.connection, self.guild.id, data)
+        db.update_tournament(
+            self.connection,
+            self.guild.id,
+            self.category.id if self.category else None,
+            data,
+        )
 
     async def send(self, message):
+        """Send a Discord message, split it if necessary, reference request."""
         rest = ""
         while message:
             message, rest = self._split_text(message, 2000)
@@ -54,7 +84,7 @@ class Command:
             rest = ""
 
     async def send_embed(self, embed):
-        """Paginate the embed if necessary"""
+        """Send a Discord embed, paginate it if necessary."""
         messages = []
         fields = []
         base_title = embed.title
@@ -87,6 +117,7 @@ class Command:
         return messages
 
     def _split_text(self, s, limit):
+        """Utility function to split a text at a convenient spot."""
         if len(s) < limit:
             return s, ""
         index = s.rfind("\n", 0, limit)
@@ -100,11 +131,13 @@ class Command:
         return s[:index], s[rindex:]
 
     def _check_tournament(self):
+        """Check if there is a running tournament or raise CommandFailed."""
         if self.tournament:
             return
         raise CommandFailed("No tournament in progress")
 
     def _check_judge(self, message=None):
+        """Check if author is a judge or raise CommandFailed."""
         self._check_tournament()
         judge_role = self.guild.get_role(self.tournament.judge_role)
         if judge_role in self.author.roles:
@@ -113,6 +146,7 @@ class Command:
         raise CommandFailed(message)
 
     def _check_judge_private(self):
+        """Check if we are in the judges channel or raise CommandFailed."""
         self._check_judge()
         judge_channel = self.guild.get_channel(
             self.tournament.channels[self.tournament.JUDGES_TEXT]
@@ -123,7 +157,35 @@ class Command:
             f"This command can only be issued in the {judge_channel.mention} channel"
         )
 
+    def _check_current_round_modifiable(self):
+        """Check if the round can be modified or raise CommandFailed."""
+        self._check_tournament()
+        if not self.tournament.current_round:
+            raise CommandFailed("No seating has been done yet")
+        if self._round_results():
+            raise CommandFailed(
+                "Some tables have reported their result, unable to modify seating."
+            )
+
+    def _check_round(self, round=None):
+        """Check if this is a valid round number or raise CommandFailed."""
+        self._check_tournament()
+        if not self.tournament.current_round:
+            raise CommandFailed("Tournament has not begun")
+        if len(self.tournament.results) < self.tournament.current_round:
+            self.tournament.results.append({})
+        if round and len(self.tournament.results) < round:
+            raise CommandFailed("Invalid round number")
+
+    def _round_results(self):
+        """Get the current round result or an empty dict."""
+        index = self.tournament.current_round - 1
+        if len(self.tournament.results) > index:
+            return self.tournament.results[index]
+        return {}
+
     def _player_display(self, vekn):
+        """How to display a player."""
         name = self.tournament.registered.get(vekn)
         user_id = self.tournament.players.get(vekn)
         if user_id:
@@ -131,62 +193,213 @@ class Command:
         else:
             member = None
         return (
-            f"{name} #{vekn} " if name else f"#{vekn} "
-        ) + f"{member.mention if member else ''}"
+            ("**[D]** " if vekn in self.tournament.disqualified else "")
+            + (f"{name} #{vekn} " if name else f"#{vekn} ")
+            + (f"{member.mention}" if member else "")
+        )
 
-    def _score_display(self, score):
-        return f"({score[0]}GW{score[1]}, {score[2]}TP)"
+    def _get_player_number(self, vekn):
+        """Retrieve a player number from their VEKN."""
+        if not self.tournament.seating:
+            raise CommandFailed("Tournament has not started")
+        number = {v: k for k, v in self.tournament.player_numbers.items()}.get(vekn)
+        if not number:
+            raise CommandFailed("Player has not checked in")
+        return number
 
-    async def help(self, *args):
-        """Help message (bot manual)"""
-        embed = discord.Embed(title="Archon help", description="")
-        if self.tournament:
-            embed.description += """**Player commands**
-- `archon help`: Display this help message
-- `archon status`: current tournament status
-- `archon checkin [ID#]`: check in for tournament (with VEKN ID# if required)
-- `archon report [VP#]`: Report your score for the round
-- `archon drop`: Drop from the tournament
-"""
+    def _get_vekn(self, user_id):
+        """Get a player VEKN from their Discord user ID."""
+        self._check_tournament()
+        vekn = {v: k for k, v in self.tournament.players.items()}.get(user_id)
+        if vekn:
+            return vekn
+        member = self.guild.get_member(user_id)
+        if not member:
+            raise CommandFailed("User is not in server")
         else:
-            embed.description += (
-                "`archon open [Rounds#] [tournament name]`: start a new tournament"
+            raise CommandFailed(f"{member.mention} has not checked in")
+
+    def _get_ranking(self, toss=False):
+        """Get the overall ranking. `_compute_scores()` must have been called first."""
+        ranking = []
+        last = tournament.Score(math.nan, math.nan, math.nan)
+        rank = 1
+        for j, (vekn, score) in enumerate(
+            sorted(
+                self.scores.items(),
+                key=lambda a: (
+                    a[0] not in self.tournament.disqualified,
+                    self.winner == a[0],
+                    a[1],
+                    -self.tournament.finals_seeding.index(a[0])
+                    if a[0] in self.tournament.finals_seeding
+                    else 0,
+                    random.random() if toss else a[0],
+                ),
+                reverse=True,
+            ),
+            1,
+        ):
+            if vekn in self.tournament.disqualified and last is not None:
+                last = None
+                rank = j
+            elif vekn not in self.tournament.disqualified and last != score:
+                rank = 2 if self.winner and 2 < j < 6 else j
+            ranking.append((rank, vekn, score))
+            last = score
+        return ranking
+
+    def _compute_scores(self, raise_on_incorrect=True):
+        """Compute the overall scores. Sets `self.scores` and `self.winner`."""
+        for i in range(1, len(self.tournament.seating) + 1):
+            round_result, _, incorrect = self.tournament._compute_round_result(i)
+            if raise_on_incorrect and incorrect:
+                raise CommandFailed(
+                    f"Incorrect results for round {i} tables {incorrect}"
+                )
+            if raise_on_incorrect and not round_result:
+                raise CommandFailed(f"No result for round {i}")
+            for player, score in round_result.items():
+                self.scores[player].gw += score.gw
+                self.scores[player].vp += score.vp
+                self.scores[player].tp += score.tp
+        if self.tournament.finals_seeding:
+            round_result, _, incorrect = self.tournament._compute_round_result()
+            if raise_on_incorrect and incorrect:
+                raise CommandFailed("Incorrect results for finals")
+            if raise_on_incorrect and not round_result:
+                raise CommandFailed("No result for finals")
+            if round_result:
+                self.winner = max(
+                    round_result.items(),
+                    key=lambda a: (a[1], -self.tournament.finals_seeding.index(a[0])),
+                )[0]
+                self.scores[self.winner].gw += 1
+                for player, score in round_result.items():
+                    self.scores[player].vp += score.vp
+
+    async def _close_current_round(self):
+        """Close current round or raise CommandFailed if results are incorrect."""
+        if self.tournament.current_round:
+            round_results, _, incorrect = self.tournament._compute_round_result()
+            if not round_results:
+                raise CommandFailed(
+                    "No table has reported their result yet, "
+                    "previous round cannot be closed. "
+                    "Use `archon unseat` to recompute a new seating."
+                )
+            if incorrect:
+                plural = len(incorrect) > 1
+                raise CommandFailed(
+                    f"Table{'s' if plural else ''} {', '.join(map(str, incorrect))} "
+                    f"{'have' if plural else 'has'} incorrect results, "
+                    "previous round cannot be closed."
+                )
+        await self._remove_tables()
+
+    def _from_judge(self):
+        """Returns true if request is from a judge."""
+        return self.tournament and (
+            self.guild.get_role(self.tournament.judge_role) in self.author.roles
+        )
+
+    def _get_mentioned_members(self):
+        """Get the member(s) mentioned in the request."""
+        return filter(
+            bool,
+            (self.guild.get_member(mention.id) for mention in self.message.mentions),
+        )
+
+    def _get_mentioned_player(self, vekn=None):
+        """Get a single player mentioned by Discord or by VEKN ID."""
+        mention = None
+        if vekn not in self.tournament.players:
+            vekn = None
+        if len(self.message.mentions) > 1:
+            raise CommandFailed("You must mention a single player.")
+        if len(self.message.mentions) > 0:
+            mention = self.message.mentions[0]
+            vekn = self._get_vekn(mention.id)
+        elif vekn not in self.tournament.players:
+            vekn = None
+        if not vekn:
+            raise CommandFailed(
+                "You must mention a player (Discord mention or ID number)."
             )
-        if self.guild.get_role(self.tournament.judge_role) in self.author.roles:
-            embed.description += """
-**Judge commands**
-- `archon appoint [@user] (...[@user])`: appoint users as judges
-- `archon spectator [@user] (...[@user])`: appoint users as spectators
-- `archon register [ID#] [Full Name]`: register a user (Use `-` for auto ID)
-- `archon checkin [ID#] [@user]`: check user in (even if disqualified)
-- `archon uncheck`: reset check-in
-- `archon allcheck`: check in all registered players
-- `archon players`: display the list of players
-- `archon seat`: Seat the next round
-- `archon add [@player | ID#]`: Add a player to the round (on a 4 players table)
-- `archon unseat`: Rollback the round seating
-- `archon results`: check current round results
-- `archon standings`: Display current standings
-- `archon caution [@player | ID#] [Reason]`: Issue a caution to a player
-- `archon warn [@player | ID#] [Reason]`: Issue a warning to a player
-- `archon disqualify [@player | ID#] [Reason]`: Disqualify a player
-- `archon close`: Close current tournament
+        return mention.id if mention else None, vekn
 
-**Judge private commands**
-- `archon upload`: upload the list of registered players (attach CSV file)
-- `archon players`: display the list of players and their current score
-- `archon registrations`: display the list of registrations
-- `archon fix [Round] [ID#] [VP#]`: fix a VP report
-- `archon validate [Round] [Table] [Reason]`: validate an odd VP situation
-"""
-        await self.send_embed(embed)
+    def _vekn_to_number(self):
+        """Returns the vekn -> number dict."""
+        return {v: k for k, v in self.tournament.player_numbers.items()}
 
-    async def default(self, *args):
+    async def _drop_player(self, vekn):
+        """Drop a player."""
+        if self.tournament.staggered:
+            raise CommandFailed(
+                "This is a staggered tournament, players cannot drop out."
+            )
+        self.tournament.dropped.add(vekn)
+        if not self.tournament.seating:
+            return
+        if len(self.tournament.seating[-1]) in [8, 12]:
+            await self.send(
+                "The number of players does not allow a round anymore: "
+                "additional players or drop outs required."
+            )
+
+    async def _remove_tables(self):
+        """Remove bot-created tables."""
+        await asyncio.gather(
+            *(
+                self.guild.get_channel(channel).delete()
+                for key, channel in self.tournament.channels.items()
+                if self.guild.get_channel(channel)
+                and (key.startswith("table-") or key.startswith("finals-"))
+            )
+        )
+        await asyncio.gather(
+            *(
+                role.delete()
+                for role in self.guild.roles
+                if role.name.startswith(f"{self.tournament.prefix}Table-")
+            )
+        )
+
+    @property
+    def reason(self):
+        """Reason given for Discord logs on channel/role creations."""
+        return f"{self.tournament.name} Tournament"
+
+    @property
+    def judge_role(self):
+        """Get the Judge Role object."""
+        return self.guild.get_role(self.tournament.judge_role)
+
+    @property
+    def spectator_role(self):
+        """Get the Spectator Role object."""
+        return self.guild.get_role(self.tournament.spectator_role)
+
+    @property
+    def round_players(self):
+        """Get the set of players for this round."""
+        return set(self.tournament.players.keys()) - self.tournament.dropped
+
+    async def __call__(self, *args):
+        """Command code: this one is the default command.
+
+        Override in inheriting classes to implement other commands.
+        """
         if not self.tournament:
             raise CommandFailed(
                 "No tournament in progress. Use `archon open` to start one."
             )
-        if self.tournament.registered and not self.tournament.finals_seeding:
+        if self.tournament.finals_seeding:
+            raise CommandFailed("Finals in progress")
+        if not self.tournament.checkin:
+            await self.send("Waiting for check-in to start")
+            return
+        if self.tournament.registered:
             await self.send_embed(
                 discord.Embed(
                     title="Archon check-in",
@@ -199,82 +412,154 @@ class Command:
                 )
             )
             return
-        if not self.tournament.finals_seeding:
-            await self.send_embed(
-                discord.Embed(
-                    title="Archon check-in",
-                    description=(
-                        "**Discord check-in is required to play in this tournament**\n"
-                        "Use `archon checkin` to check in the tournament."
-                    ),
-                )
+        await self.send_embed(
+            discord.Embed(
+                title="Archon check-in",
+                description=(
+                    "**Discord check-in is required to play in this tournament**\n"
+                    "Use `archon checkin` to check in the tournament."
+                ),
             )
-            return
+        )
 
-    async def open(self, rounds, *args):
+
+class Help(Command):
+    async def __call__(self, *args):
+        embed = discord.Embed(title="Archon help", description="")
+        if self.tournament:
+            embed.description += """**Player commands**
+- `archon help`: Display this help message
+- `archon status`: current tournament status
+- `archon checkin [ID#]`: check in for tournament (with VEKN ID# if required)
+- `archon report [VP#]`: Report your score for the round
+- `archon drop`: Drop from the tournament
+"""
+        else:
+            embed.description += (
+                "`archon open [name]`: start a new tournament or league"
+            )
+        if self._from_judge():
+            embed.description += """
+**Judge commands**
+- `archon appoint [@user] (...[@user])`: appoint users as judges
+- `archon spectator [@user] (...[@user])`: appoint users as spectators
+- `archon register [ID#] [Full Name]`: register a user (Use `-` for auto ID)
+- `archon checkin [ID#] [@user]`: check user in (even if disqualified)
+- `archon players`: display the list of players
+- `archon checkin-start`: open check-in
+- `archon checkin-stop`: stop check-in
+- `archon checkin-reset`: reset check-in
+- `archon checkin-all`: check-in all registered players
+- `archon staggered [rounds#]`: run a staggered tournament (6, 7, or 11 players)
+- `archon round-start`: seat the next round
+- `archon round-reset`: rollback the round seating
+- `archon round-finish`: stop reporting and close the current round
+- `archon round-add [@player | ID#]`: add a player to the round (on a 4 players table)
+- `archon results`: check current round results
+- `archon standings`: display current standings
+- `archon finals`: start the finals
+- `archon caution [@player | ID#] [Reason]`: Issue a caution to a player
+- `archon warn [@player | ID#] [Reason]`: Issue a warning to a player
+- `archon disqualify [@player | ID#] [Reason]`: Disqualify a player
+- `archon close`: Close current tournament
+
+**Judge private commands**
+- `archon upload`: upload the list of registered players (attach CSV file)
+- `archon players`: display the list of players and their current score
+- `archon player [@player | ID#]`: Display player information, cautions and warnings
+- `archon registrations`: display the list of registrations
+- `archon fix [@player | ID#] [VP#] {Round}`: fix a VP report (current round by default)
+- `archon validate [Round] [Table] [Reason]`: validate an odd VP situation
+"""
+        await self.send_embed(embed)
+
+
+class Open(Command):
+    UPDATE = True
+
+    async def __call__(self, *args):
         if self.tournament:
             raise CommandFailed("Tournament already in progress")
         self.tournament.name = " ".join(args)
-        self.tournament.rounds = int(rounds)
-        judge_role = await self.guild.create_role(name=f"{self.tournament.prefix}Judge")
-        spectator_role = await self.guild.create_role(
-            name=f"{self.tournament.prefix}Spectator"
+        prefixes = db.get_active_prefixes(self.connection, self.guild.id)
+        if self.tournament.prefix in prefixes:
+            raise CommandFailed(
+                "A tournament with the same initials is already running"
+            )
+        judge_role, spectator_role = await asyncio.gather(
+            self.guild.create_role(name=f"{self.tournament.prefix}Judge"),
+            self.guild.create_role(name=f"{self.tournament.prefix}Spectator"),
         )
         self.tournament.judge_role = judge_role.id
         self.tournament.spectator_role = spectator_role.id
-        await db.create_tournament(self.guild.id, self.tournament.to_json())
-        await self.author.add_roles(
-            judge_role, reason=f"{self.tournament.name} Tournament opened"
+        db.create_tournament(
+            self.connection,
+            self.tournament.prefix,
+            self.guild.id,
+            self.category.id if self.category else None,
+            self.tournament.to_json(),
         )
-        await self.guild.me.add_roles(
-            judge_role, reason=f"{self.tournament.name} Tournament opened"
+        results = await asyncio.gather(
+            self.author.add_roles(judge_role, reason=self.reason),
+            self.guild.me.add_roles(judge_role, reason=self.reason),
+            self.guild.create_text_channel(
+                name="Judges",
+                category=self.category,
+                overwrites={
+                    self.guild.default_role: perm.NO_TEXT,
+                    judge_role: perm.TEXT,
+                },
+            ),
+            self.guild.create_voice_channel(
+                name="Judges",
+                category=self.category,
+                overwrites={
+                    self.guild.default_role: perm.NO_VOICE,
+                    judge_role: perm.VOICE,
+                },
+            ),
         )
-        channel = await self.guild.create_text_channel(
-            name="Judges",
-            category=self.category,
-            overwrites={
-                self.guild.default_role: perm.NO_TEXT,
-                judge_role: perm.TEXT,
-            },
-        )
-        self.tournament.channels[self.tournament.JUDGES_TEXT] = channel.id
-        channel = await self.guild.create_voice_channel(
-            name="Judges",
-            category=self.category,
-            overwrites={
-                self.guild.default_role: perm.NO_VOICE,
-                judge_role: perm.VOICE,
-            },
-        )
-        self.tournament.channels[self.tournament.JUDGES_VOCAL] = channel.id
+        self.tournament.channels[self.tournament.JUDGES_TEXT] = results[2].id
+        self.tournament.channels[self.tournament.JUDGES_VOCAL] = results[3].id
         self.update()
-        await self.send("Tournament open")
+        await self.send(
+            "Tournament open. Use:\n"
+            "- `archon appoint` to appoint judges,\n"
+            "- `archon register` or `archon upload` to register players (optional),\n"
+            "- `archon checkin-start` to open the check-in for the first round."
+        )
 
-    async def appoint(self, *args):
+
+class Appoint(Command):
+    async def __call__(self, *args):
         self._check_judge()
-        judge_role = self.guild.get_role(self.tournament.judge_role)
-        for mention in self.message.mentions:
-            member = self.guild.get_member(mention.id)
-            if not member:
-                continue
-            await member.add_roles(
-                judge_role, reason=f"{self.tournament.name} Tournament appointment"
+        judge_role = self.judge_role
+        await asyncio.gather(
+            *(
+                member.add_roles(judge_role, reason=self.reason)
+                for member in self._get_mentioned_members()
             )
+        )
         await self.send("Judge(s) appointed")
 
-    async def spectator(self, *args):
+
+class Spectator(Command):
+    async def __call__(self, *args):
         self._check_judge()
         spectator_role = self.guild.get_role(self.tournament.spectator_role)
-        for mention in self.message.mentions:
-            member = self.guild.get_member(mention.id)
-            if not member:
-                continue
-            await member.add_roles(
-                spectator_role, reason=f"{self.tournament.name} Tournament appointment"
+        await asyncio.gather(
+            *(
+                member.add_roles(spectator_role, reason=self.reason)
+                for member in self._get_mentioned_members()
             )
+        )
         await self.send("Spectator(s) appointed")
 
-    async def register(self, vekn, *args):
+
+class Register(Command):
+    UPDATE = True
+
+    async def __call__(self, vekn, *args):
         self._check_judge()
         vekn = vekn.strip("-").strip("#")
         name = " ".join(args)
@@ -284,26 +569,36 @@ class Command:
         self.update()
         await self.send(f"{name} registered with ID# {vekn}")
 
-    async def status(self):
+
+class Status(Command):
+    async def __call__(self):
         self._check_tournament()
-        message = f"**{self.tournament.name}** ({self.tournament.rounds}R+F)"
+        message = f"**{self.tournament.name}**"
         if self.tournament.registered:
             message += f"\n{len(self.tournament.registered)} players registered"
         if self.tournament.players:
-            count = len(self.tournament.players) - len(self.tournament.dropped)
-            message += f"\n{count} players checked in"
+            message += f"\n{len(self.round_players)} players checked in"
         if self.tournament.current_round:
-            if self.tournament.finals:
+            if self.tournament.finals_seeding:
                 if len(self.tournament.results) == self.tournament.current_round:
-                    _score, winner = await self._get_total_scores(False)
-                    message += f"\n{self._player_display(winner)} is the winner!"
+                    try:
+                        self._compute_scores()
+                        message += (
+                            f"\n{self._player_display(self.winner)} is the winner!"
+                        )
+                    except CommandFailed:
+                        message += "\nFinals in progress"
                 else:
                     message += "\nFinals in progress"
             else:
                 message += f"\nRound {self.tournament.current_round} in progress"
         await self.channel.send(message)
 
-    async def upload(self, *args):
+
+class Upload(Command):
+    UPDATE = True
+
+    async def __call__(self, *args):
         self._check_judge_private()
         data = await self.message.attachments[0].read()
         data = io.StringIO(data.decode("utf-8"))
@@ -335,52 +630,18 @@ class Command:
         self.update()
         await self.send(f"{len(self.tournament.registered)} players registered")
 
-    async def _fetch_official_vekn(self, session, token, vekn):
-        async with session.get(
-            f"https://www.vekn.net/api/vekn/registry?filter={vekn}",
-            headers={"Authorization": f"Bearer {token}"},
-        ) as response:
-            result = await response.json()
-            logger.info("Received: %s", result)
-            result = result["data"]
-            if isinstance(result, str):
-                return False, f"VEKN returned an error: {result}"
-            result = result["players"]
-            if len(result) > 1:
-                return False, "Incomplete VEKN ID#"
-            if len(result) < 1:
-                return False, "VEKN ID# not found"
-            result = result[0]
-            if result["veknid"] != vekn:
-                return False, "VEKN ID# not found"
-            return True, result["firstname"] + " " + result["lastname"]
 
-    async def allcheck(self):
-        self._check_judge()
-        if not self.tournament.registered:
-            raise CommandFailed(
-                "If you do not use checkin, "
-                "you need to provide a registrations list by using `archon upload` "
-                "or `archon register`."
-            )
-        self.tournament.players.update(
-            {vekn: None for vekn in self.tournament.registered.keys()}
-        )
-        self.update()
-        await self.send("All registered players will play.")
+class Checkin(Command):
+    UPDATE = True
 
-    async def uncheck(self):
-        self._check_judge()
-        for vekn in self.tournament.players.keys():
-            self._drop_player(vekn)
-        self.update()
-        await self.send("Check in reset.")
-
-    async def checkin(self, vekn=None, mention=None):
+    async def __call__(self, vekn=None, mention=None):
         self._check_tournament()
-        vekn = vekn or ""
-        vekn = vekn.strip("#")
-        judge_role = self.guild.get_role(self.tournament.judge_role)
+        if not self.tournament.checkin:
+            raise CommandFailed(
+                "Check-in is closed. Use `archon checkin-start` to open it"
+            )
+        vekn = (vekn or "").strip("#")
+        judge_role = self.judge_role
         if mention:
             self._check_judge(f"Only a {judge_role.mention} can check in another user")
             if len(self.message.mentions) > 1:
@@ -432,17 +693,10 @@ class Command:
         self.tournament.dropped.discard(vekn)
         self.tournament.players[vekn] = member.id if member else None
         # late checkin
-        if self.tournament.player_numbers:
-            vekn_to_number = {v: k for k, v in self.tournament.player_numbers.items()}
-            number = vekn_to_number.get(vekn)
-            if not number:
-                number = len(self.tournament.player_numbers) + 1
-                self.tournament.player_numbers[number] = vekn
-            for i, permutation in enumerate(self.tournament.seating):
-                if i < self.tournament.current_round:
-                    continue
-                if number not in permutation:
-                    permutation.append(number)
+        if self.tournament.staggered:
+            raise CommandFailed(
+                "This is a staggered tournament, it cannot accept more players."
+            )
         self.update()
         name = self.tournament.registered.get(vekn, "")
         await self.send(
@@ -450,43 +704,74 @@ class Command:
             f"{name}{' ' if name else ''}#{vekn}"
         )
 
-    def _drop_player(self, vekn):
-        self.tournament.dropped.add(vekn)
-        if not self.tournament.player_numbers:
-            return
-        number = {v: k for k, v in self.tournament.player_numbers.items()}.get(vekn)
-        for i, permutation in enumerate(self.tournament.seating):
-            if i < self.tournament.current_round:
-                continue
-            if number in permutation:
-                permutation.remove(number)
 
-    async def drop(self, *args):
+class CheckinReset(Command):
+    UPDATE = True
+
+    async def __call__(self, vekn=None, mention=None):
+        self._check_judge()
+        for vekn in self.tournament.players.keys():
+            await self._drop_player(vekn)
+        self.tournament.checkin = False
+        self.update()
+        await self.send("Check-in reset")
+
+
+class CheckinStart(Command):
+    UPDATE = True
+
+    async def __call__(self):
+        self._check_judge()
+        self.tournament.checkin = True
+        self.update()
+        await self.send("Check-in is open")
+
+
+class CheckinStop(Command):
+    UPDATE = True
+
+    async def __call__(self):
+        self._check_judge()
+        self.tournament.checkin = False
+        self.update()
+        await self.send("Check-in is closed")
+
+
+class CheckinAll(Command):
+    UPDATE = True
+
+    async def __call__(self):
+        self._check_judge()
+        if not self.tournament.registered:
+            raise CommandFailed(
+                "If you do not use checkin, "
+                "you need to provide a registrations list by using `archon upload` "
+                "or `archon register`."
+            )
+        self.tournament.players.update(
+            {vekn: None for vekn in self.tournament.registered.keys()}
+        )
+        self.tournament.checkin = False
+        self.update()
+        await self.send("All registered players will play")
+
+
+class Drop(Command):
+    UPDATE = True
+
+    async def __call__(self, *args):
         self._check_tournament()
         author = self.message.author
         vekn = self._get_vekn(author.id)
-        self._drop_player(vekn)
+        await self._drop_player(vekn)
         self.update()
         await self.send(f"{author.mention} dropped out")
 
-    def _get_mentioned_player(self, vekn=None):
-        mention = None
-        if vekn not in self.tournament.players:
-            vekn = None
-        if len(self.message.mentions) > 1:
-            raise CommandFailed("You must mention a single player.")
-        if len(self.message.mentions) > 0:
-            mention = self.message.mentions[0]
-            vekn = self._get_vekn(mention.id)
-        elif vekn not in self.tournament.players:
-            vekn = None
-        if not vekn:
-            raise CommandFailed(
-                "You must mention a player (Discord mention or ID number)."
-            )
-        return mention.id if mention else None, vekn
 
-    async def caution(self, *args):
+class Caution(Command):
+    UPDATE = True
+
+    async def __call__(self, *args):
         self._check_judge()
         _, vekn = self._get_mentioned_player(*args[:1])
         self.tournament.cautions.setdefault(vekn, [])
@@ -504,7 +789,11 @@ class Command:
         self.update()
         await self.send("Player cautioned")
 
-    async def warn(self, *args):
+
+class Warn(Command):
+    UPDATE = True
+
+    async def __call__(self, *args):
         self._check_judge()
         _, vekn = self._get_mentioned_player(*args[:1])
         self.tournament.warnings.setdefault(vekn, [])
@@ -522,50 +811,36 @@ class Command:
         self.update()
         await self.send("Player warned")
 
-    async def disqualify(self, *args):
+
+class Disqualify(Command):
+    UPDATE = True
+
+    async def __call__(self, *args):
         self._check_judge()
         _, vekn = self._get_mentioned_player(*args[:1])
         self.tournament.warnings.setdefault(vekn, [])
         self.tournament.warnings[vekn].append(
             [self.tournament.current_round, " ".join(args[1:])]
         )
-        self._drop_player(vekn)
+        await self._drop_player(vekn)
         self.tournament.disqualified.add(vekn)
         self.update()
         await self.send("Player disqualifed")
 
-    def _get_player_number(self, vekn):
-        if not self.tournament.seating:
-            raise CommandFailed("Tournament has not started")
-        number = {v: k for k, v in self.tournament.player_numbers.items()}.get(vekn)
-        if not number:
-            raise CommandFailed("Player has not checked in")
-        return number
 
-    def _get_vekn(self, user_id):
-        self._check_tournament()
-        vekn = {v: k for k, v in self.tournament.players.items()}.get(user_id)
-        if vekn:
-            return vekn
-        member = self.guild.get_member(user_id)
-        if not member:
-            raise CommandFailed("User is not in server")
-        else:
-            raise CommandFailed(f"{member.mention} has not checked in")
-
-    async def player(self, *args):
-        await self._check_judge_private()
+class Player(Command):
+    async def __call__(self, *args):
+        self._check_judge_private()
         _user_id, vekn = self._get_mentioned_player(*args[:1])
-        score, _winner = self._get_total_scores(raise_on_incorrect=False)
-        score = score[vekn]
+        self._compute_scores(raise_on_incorrect=False)
+        score = self.scores[vekn]
         embed = discord.Embed(title="Player Information", description="")
-        embed.description = f"**{self._player_display(vekn)}**\n"
-        if vekn in self.tournament.dropped:
-            if vekn in self.tournament.warnings:
-                embed.description += "Disqualified\n"
-            else:
-                embed.description += "Dropped\n"
-        embed.description += f"{self._score_display(score)}\n"
+        embed.description = f"** {self._player_display(vekn)} **\n"
+        if vekn in self.tournament.disqualified:
+            embed.description += "Disqualified\n"
+        elif vekn in self.tournament.dropped:
+            embed.description += "Absent\n"
+        embed.description += f"{score}\n"
         if vekn in self.tournament.cautions:
             cautions = self.tournament.cautions[vekn]
             embed.add_field(
@@ -582,233 +857,74 @@ class Command:
             )
         await self.send_embed(embed)
 
-    async def players(self, *args):
+
+class Players(Command):
+    async def __call__(self):
         self._check_judge()
-        judge_channel = self.guild.get_channel(
-            self.tournament.channels[self.tournament.JUDGES_TEXT]
+        await self.send_embed(
+            discord.Embed(
+                title="Players list",
+                description="\n".join(
+                    f"- {self._player_display(vekn)}"
+                    for vekn in sorted(self.tournament.players.keys())
+                ),
+            )
         )
-        private = True if self.channel.id == judge_channel.id else False
 
-        scores, _winner = self._get_total_scores(raise_on_incorrect=False)
-        embed = discord.Embed(title="Players list", description="")
-        for vekn in self.tournament.players.keys():
-            s = f"- {self._player_display(vekn)}"
-            if private:
-                s += f" {self._score_display(scores[vekn])}"
-                if vekn in self.tournament.dropped:
-                    s += " **[D]**"  # dropped or disqualified
-                elif vekn in self.tournament.warnings:
-                    s += " **[W]**"
-            s += "\n"
-            embed.description += s
-        await self.send_embed(embed)
 
-    async def registrations(self, *args):
+class Registrations(Command):
+    async def __call__(self):
         self._check_judge_private()
         embed = discord.Embed(title="Registrations", description="")
         for vekn in sorted(self.tournament.registered.keys()):
             s = f"- {self._player_display(vekn)}"
-            if vekn in self.tournament.dropped:
-                s += " **[D]**"  # dropped or disqualified
-            if vekn in self.tournament.warnings:
-                if vekn not in self.tournament.dropped:
-                    s += " **[W]**"
             embed.description += s + "\n"
         await self.send_embed(embed)
 
-    def _check_current_round_modifiable(self):
-        self._check_tournament()
-        if not self.tournament.current_round:
-            raise CommandFailed("No seating has been done yet")
-        index = self.tournament.current_round - 1
-        if len(self.tournament.results) > index and self.tournament.results[index]:
-            raise CommandFailed(
-                "Some tables have reported their result, unable to modify seating."
-            )
 
-    def _get_total_scores(self, raise_on_incorrect=True):
-        winner = None
-        scores = collections.defaultdict(lambda: [0, 0, 0, 0])
-        for i in range(len(self.tournament.seating)):
-            round_result, _, incorrect = self.tournament._compute_round_result(i)
-            if raise_on_incorrect and incorrect:
-                raise CommandFailed(
-                    f"Incorrect results for round {i + 1} tables {incorrect}"
-                )
-            for player, score in round_result.items():
-                scores[player][0] += score[0]
-                scores[player][1] += score[1]
-                scores[player][2] += score[2]
-                scores[player][3] += random.random()
-        if self.tournament.finals and self.tournament.finals_seeding:
-            round_result, _, _ = self.tournament._compute_round_result(
-                self.tournament.current_round - 1
-            )
-            winner = max(
-                round_result.items(),
-                key=lambda a: (a[1], -self.tournament.finals_seeding.index(a[0])),
-            )[0]
-            scores[winner][0] += 1
-            for player, score in round_result.items():
-                scores[player][1] += score
-        return scores, winner
+class _ProgressUpdate:
+    def __init__(self, processes, message, embed):
+        self.processes = processes
+        self.message = message
+        self.embed = embed
+        self.progress = [0] * self.processes
 
-    async def seat(self):
+    def __call__(self, i):
+        async def progression(step, **kwargs):
+            self.progress[i] = (step / (ITERATIONS * self.processes)) * 100
+            progress = sum(self.progress)
+            if not progress % 5 and progress < 100:
+                progress = "▇" * int(progress // 5) + "▁" * (20 - int(progress // 5))
+                self.embed.description = progress
+                await self.message.edit(embed=self.embed)
+
+        return progression
+
+
+class RoundStart(Command):
+    UPDATE = True
+
+    async def __call__(self):
         self._check_judge()
-        if self.tournament.current_round:
-            index = self.tournament.current_round - 1
-            if len(self.tournament.results) <= index:
-                raise CommandFailed(
-                    "No table has reported their result yet, "
-                    "previous round cannot be closed. "
-                    "Use `archon unseat` to recompute a new seating."
-                )
-            round_result, _, incorrect = self.tournament._compute_round_result(index)
-            if incorrect:
-                raise CommandFailed(
-                    f"Tables {', '.join(map(str, incorrect))} "
-                    "have incorrect results, "
-                    "previous round cannot be closed."
-                )
-        await self._remove_tables()
-        if not self.tournament.seating:
-            self.tournament.seating = krcg.seating.permutations(
-                len(self.tournament.players) - len(self.tournament.dropped),
-                self.tournament.rounds,
-            )
-            for p in self.tournament.seating[1:]:
-                random.shuffle(p)
-        permutations = self.tournament.seating
+        await self._close_current_round()
         self.tournament.current_round += 1
-        judge_role = self.guild.get_role(self.tournament.judge_role)
-        spectator_role = self.guild.get_role(self.tournament.spectator_role)
-        # finals
-        if self.tournament.finals:
-            scores, _ = self._get_total_scores()
-            table_role = await self.guild.create_role(
-                name=f"{self.tournament.prefix}Finals"
-            )
-            await self.guild.me.add_roles(
-                table_role, reason=f"{self.tournament.name} Tournament seating"
-            )
-            results = []
-            finals = []
-            last = [math.nan] * 3
-            place = 1
-            cut = 6
-            for j, (vekn, score) in enumerate(
-                sorted(
-                    scores.items(),
-                    key=lambda a: (a[0] not in self.tournament.dropped, a[1]),
-                    reverse=True,
-                ),
-                1,
-            ):
-                member = self.guild.get_member(self.tournament.players.get(vekn, 0))
-                if vekn in self.tournament.dropped:
-                    place = "**[D]**"
-                elif last != score[:3]:
-                    place = j
-                last = score[:3]
-                results.append(
-                    f"- {place}. {self._player_display(vekn)} "
-                    f"{self._score_display(score)}"
-                )
-                if j < cut and vekn not in self.tournament.dropped:
-                    finals.append(
-                        f"- {len(finals) + 1} {self._player_display(vekn)} "
-                        f"{self._score_display(score)}"
-                    )
-                    self.tournament.finals_seeding.append(vekn)
-                    if member:
-                        await member.add_roles(
-                            table_role,
-                            reason=f"{self.tournament.name} Tournament seating",
-                        )
-            channel = await self.guild.create_text_channel(
-                name="Finals",
-                category=self.category,
-                overwrites={
-                    self.guild.default_role: perm.SPECTATE_TEXT,
-                    judge_role: perm.TEXT,
-                    table_role: perm.TEXT,
-                },
-            )
-            self.tournament.channels["finals-text"] = channel.id
-            channel = await self.guild.create_voice_channel(
-                name="Finals",
-                category=self.category,
-                overwrites={
-                    self.guild.default_role: perm.NO_VOICE,
-                    spectator_role: perm.SPECTATE_VOICE,
-                    judge_role: perm.JUDGE_VOICE,
-                    table_role: perm.VOICE,
-                },
-            )
-            self.tournament.channels["finals-vocal"] = channel.id
-            self.update()
-            messages = await self.send_embed(
-                embed=discord.Embed(
-                    title="Rounds results", description="\n".join(results)
-                )
-            )
-            messages = await self.send_embed(
-                embed=discord.Embed(title="Finals", description="\n".join(finals))
-            )
-            await messages[0].pin()
-            return
-        if self.tournament.current_round > len(permutations) + 1:
-            raise CommandFailed(
-                "All rounds have been played, "
-                "use `archon close` to finish the tournament "
-                "or `archon unseat` to cancel last round seating arrangement."
-            )
-        # normal round
+        self.tournament.reporting = True
+        self._assign_player_numbers()
+        if not self.tournament.staggered:
+            self._init_seating()
         if self.tournament.current_round > 1:
-            embed = discord.Embed(
-                title=f"Round {self.tournament.current_round} - computing seating",
-                description="▁" * 20,
-            )
-            messages = await self.send_embed(embed)
-            progression = ProgressUpdate(4, messages[0], embed)
-            results = await asyncio.gather(
-                *(
-                    asgiref.sync.sync_to_async(krcg.seating.optimise)(
-                        permutations=permutations,
-                        iterations=ITERATIONS,
-                        callback=asgiref.sync.async_to_sync(progression(i)),
-                        fixed=max(1, self.tournament.current_round - 1),
-                        ignore=set(),
-                    )
-                    for i in range(4)
-                )
-            )
-            rounds, score = min(results, key=lambda x: x[1].total)
-            logging.info(
-                "Seating – rounds: %s, score:%s=%s", rounds, score.rules, score.total
-            )
-            self.tournament.seating = [
-                list(itertools.chain.from_iterable(r)) for r in rounds
-            ]
+            await self._optimise_seating()
         round = krcg.seating.Round(
             self.tournament.seating[self.tournament.current_round - 1]
         )
-        if not self.tournament.player_numbers:
-            players = list(
-                set(self.tournament.players.keys()) - self.tournament.dropped
-            )
-            random.shuffle(players)
-            self.tournament.player_numbers = {i: v for i, v in enumerate(players, 1)}
-            # add numbers for players who dropped in case they re-checkin later
-            for vekn in self.tournament.dropped:
-                number = len(self.tournament.player_numbers) + 1
-                self.tournament.player_numbers[number] = vekn
         table_roles = await asyncio.gather(
             *(
                 self.guild.create_role(name=f"{self.tournament.prefix}Table-{i + 1}")
                 for i in range(len(round))
             )
         )
+        judge_role = self.judge_role
+        spectator_role = self.spectator_role
         text_channels = await asyncio.gather(
             *(
                 self.guild.create_text_channel(
@@ -860,9 +976,7 @@ class Command:
         }
         await asyncio.gather(
             *(
-                members[n].add_roles(
-                    table_roles[i], reason=f"{self.tournament.name} Tournament seating"
-                )
+                members[n].add_roles(table_roles[i], reason=self.reason)
                 for i, table in enumerate(round)
                 for n in table
                 if members[n]
@@ -879,6 +993,7 @@ class Command:
                 ),
                 inline=False,
             )
+        self.tournament.checkin = False
         self.update()
         messages = await self.send_embed(embed)
         await asyncio.gather(*(m.pin() for m in messages))
@@ -897,85 +1012,130 @@ class Command:
             )
         )
 
-    async def standings(self):
-        self._check_judge()
-        embed = discord.Embed(title="Standings")
-        scores, winner = self._get_total_scores(raise_on_incorrect=False)
-        results = []
-        last = [math.nan] * 3
-        place = 1
-        for j, (vekn, score) in enumerate(
-            sorted(
-                scores.items(),
-                key=lambda a: (a[0] not in self.tournament.dropped, a[1]),
-                reverse=True,
+    def _assign_player_numbers(self):
+        round_players = self.round_players
+        vekn_to_number = self._vekn_to_number()
+        new_players = [vekn for vekn in round_players if vekn not in vekn_to_number]
+        random.shuffle(new_players)
+        for vekn, number in zip(
+            new_players,
+            range(
+                len(self.tournament.player_numbers) + 1,
+                len(self.tournament.player_numbers) + len(new_players) + 1,
             ),
-            1,
         ):
-            if vekn in self.tournament.dropped:
-                place = "**[D]**"
-            elif winner and j == 1:
-                place = "**WINNER**"
-            elif last != score[:3]:
-                place = 2 if winner and 2 < j < 6 else j
-            last = score[:3]
-            results.append(
-                f"- {place}. {self._player_display(vekn)} "
-                f"{self._score_display(score)}"
+            self.tournament.player_numbers[number] = vekn
+
+    def _init_seating(self):
+        round_players = self.round_players
+        if len(round_players) in [6, 7, 11]:
+            raise CommandFailed(
+                "The number of players requires a staggered tournament. "
+                "Add or remove players, or use the `archon staggered` command."
             )
-        embed.description = "\n".join(results)
-        await self.send_embed(embed)
+        if not self.tournament.seating:
+            self.tournament.seating = [list(range(1, len(round_players) + 1))]
+        vekn_to_number = self._vekn_to_number()
+        while self.tournament.current_round > len(self.tournament.seating):
+            self.tournament.seating.append(
+                [vekn_to_number[vekn] for vekn in round_players]
+            )
+            random.shuffle(self.tournament.seating[-1])
+        while self.tournament.current_round > len(self.tournament.results):
+            self.tournament.results.append({})
 
-    async def results(self):
-        self._check_judge()
-        if not self.tournament.current_round:
-            raise CommandFailed("No seating has been done yet.")
-        if (
-            self.tournament.finals_seeding
-            and len(self.tournament.results) > self.tournament.rounds
-        ):
-            embed = discord.Embed(title="Finals", description="")
-            for i, vekn in enumerate(self.tournament.finals_seeding, 1):
-                result = self.tournament.results[-1].get(vekn, 0)
-                embed.description += f"{i}. {self._player_display(vekn)}: {result}VP\n"
-            await self.send_embed(embed)
-        else:
-            index = min(self.tournament.current_round, self.tournament.rounds) - 1
-            embed = discord.Embed(title=f"Round {index+1}")
-            if len(self.tournament.results) <= index:
-                embed.description = "No table has reported their result yet."
-                await self.send_embed(embed)
-            result, tables, incorrect = self.tournament._compute_round_result(index)
-            incorrect = set(incorrect)
-            for i, table in enumerate(tables, 1):
-                status = "OK"
-                if sum(result[vekn][1] for vekn in table) == 0:
-                    status = "NOT REPORTED"
-                elif i in incorrect:
-                    status = "INVALID"
-                embed.add_field(
-                    name=f"Table {i} {status}",
-                    value="\n".join(
-                        f"{i}. {self._player_display(vekn)} "
-                        f"{self._score_display(result[vekn])}"
-                        for i, vekn in enumerate(table, 1)
-                    ),
-                    inline=True,
+    async def _optimise_seating(self):
+        embed = discord.Embed(
+            title=f"Round {self.tournament.current_round} - computing seating",
+            description="▁" * 20,
+        )
+        messages = await self.send_embed(embed)
+        progression = _ProgressUpdate(4, messages[0], embed)
+        results = await asyncio.gather(
+            *(
+                asgiref.sync.sync_to_async(krcg.seating.optimise)(
+                    permutations=self.tournament.seating,
+                    iterations=ITERATIONS,
+                    callback=asgiref.sync.async_to_sync(progression(i)),
+                    fixed=self.tournament.current_round - 1,
+                    ignore=set(),
                 )
-            await self.send_embed(embed)
+                for i in range(4)
+            )
+        )
+        rounds, score = min(results, key=lambda x: x[1].total)
+        logging.info(
+            "Seating – rounds: %s, score:%s=%s", rounds, score.rules, score.total
+        )
+        self.tournament.seating = [
+            list(itertools.chain.from_iterable(r)) for r in rounds
+        ]
+        await messages[0].delete()
 
-    async def unseat(self):
+
+class Staggered(Command):
+    UPDATE = True
+
+    async def __call__(self, rounds):
         self._check_judge()
-        await self._remove_tables()
+        if len(self.round_players) not in [6, 7, 11]:
+            raise CommandFailed("Staggered tournaments are for 6, 7 or 11 players")
+        if self.tournament.seating:
+            raise CommandFailed(
+                "Impossible: a tournament must be staggered from the start."
+            )
+        rounds = int(rounds)
+        self.tournament.checkin = False
+        self.tournament.staggered = True
+        if rounds > 10:
+            raise CommandFailed("Staggered tournaments must have less than 10 rounds")
+        self.tournament.seating = krcg.seating.permutations(
+            len(self.round_players), rounds
+        )
+        for i in range(1, len(self.tournament.seating)):
+            random.shuffle(self.tournament.seating[i])
+        self.update()
+        await self.send(
+            "Staggered tournament ready: "
+            f"{len(self.tournament.seating)} rounds will be played, "
+            f"each player will play {rounds} rounds out of those."
+        )
+
+
+class RoundFinish(Command):
+    UPDATE = True
+
+    async def __call__(self):
+        self._check_judge
+        await self._close_current_round()
+        self.tournament.reporting = False
+        await self.send(f"Round {self.tournament.current_round} finished")
+
+
+class RoundReset(Command):
+    UPDATE = True
+
+    async def __call__(self):
+        self._check_judge
         self._check_current_round_modifiable()
+        await self._remove_tables()
         self.tournament.current_round -= 1
+        if self.tournament.current_round <= 0:
+            self.tournament.seating = []
+            self.tournament.staggered = False
         self.tournament.finals_seeding = []
         self.update()
         await self.send("Seating cancelled")
 
-    async def add(self, *args):
-        self._check_judge()
+
+class RoundAdd(Command):
+    UPDATE = True
+
+    async def __call__(self, *args):
+        self._check_judge
         self._check_current_round_modifiable()
+        if self.tournament.staggered:
+            raise CommandFailed("Staggered tournament rounds cannot be modified")
         user_id, vekn = self._get_mentioned_player(*args[:1])
         id_to_number = {v: k for k, v in self.tournament.player_numbers.items()}
         number = id_to_number.get(vekn)
@@ -987,7 +1147,7 @@ class Command:
         if vekn in self.tournament.disqualified:
             raise CommandFailed("Player is disqualified")
         index = self.tournament.current_round - 1
-        tables = self.tournament._get_round_tables(index)
+        tables = self.tournament._get_round_tables()
         for i, table in enumerate(tables, 1):
             if len(table) > 4:
                 continue
@@ -998,7 +1158,7 @@ class Command:
                 if role.name == f"{self.tournament.prefix}Table-{i}":
                     await member.add_roles(
                         role,
-                        reason=f"{self.tournament.name} Tournament: added by judge",
+                        reason=self.reason,
                     )
                     break
             else:
@@ -1009,54 +1169,168 @@ class Command:
         else:
             await self.send("No table available to sit this player in")
 
-    async def _remove_tables(self):
-        await asyncio.gather(
-            *(
-                self.guild.get_channel(channel).delete()
-                for key, channel in self.tournament.channels.items()
-                if self.guild.get_channel(channel)
-                and (key.startswith("table-") or key.startswith("finals-"))
-            )
-        )
-        await asyncio.gather(
-            *(
-                role.delete()
-                for role in self.guild.roles
-                if role.name.startswith(f"{self.tournament.prefix}Table-")
-            )
-        )
 
-    def _check_round(self, round=None):
+class Finals(Command):
+    UPDATE = True
+
+    async def __call__(self, *args):
+        self._check_judge()
+        await self._close_current_round()
+        self.tournament.current_round += 1
+        self._compute_scores()
+        table_role = await self.guild.create_role(
+            name=f"{self.tournament.prefix}Finals"
+        )
+        top_5 = [
+            (rank, vekn, score)
+            for rank, vekn, score in self._get_ranking(toss=True)
+            if vekn not in self.tournament.disqualified
+        ][:5]
+        self.tournament.finals_seeding = [vekn for _, vekn, _ in top_5]
+        await asyncio.gather(
+            *(
+                member.add_roles(
+                    table_role,
+                    reason=self.reason,
+                )
+                for member in filter(
+                    bool,
+                    (
+                        self.guild.get_member(self.tournament.players.get(vekn, 0))
+                        for vekn in self.tournament.finals_seeding
+                    ),
+                )
+            )
+        )
+        judge_role = self.judge_role
+        spectator_role = self.spectator_role
+        text_channel, voice_channel = await asyncio.gather(
+            self.guild.create_text_channel(
+                name="Finals",
+                category=self.category,
+                overwrites={
+                    self.guild.default_role: perm.SPECTATE_TEXT,
+                    judge_role: perm.TEXT,
+                    table_role: perm.TEXT,
+                },
+            ),
+            self.guild.create_voice_channel(
+                name="Finals",
+                category=self.category,
+                overwrites={
+                    self.guild.default_role: perm.NO_VOICE,
+                    spectator_role: perm.SPECTATE_VOICE,
+                    judge_role: perm.JUDGE_VOICE,
+                    table_role: perm.VOICE,
+                },
+            ),
+        )
+        self.tournament.channels["finals-text"] = text_channel.id
+        self.tournament.channels["finals-vocal"] = voice_channel.id
+        self.update()
+        messages = await self.send_embed(
+            embed=discord.Embed(
+                title="Finals",
+                description="\n".join(
+                    f"- {i} {self._player_display(vekn)} " f"{score}"
+                    for i, (_, vekn, score) in enumerate(top_5, 1)
+                ),
+            )
+        )
+        await messages[0].pin()
+        return
+
+
+class Standings(Command):
+    async def __call__(self, *args):
+        self._check_judge()
+        embed = discord.Embed(title="Standings")
+        self._compute_scores(raise_on_incorrect=False)
+        ranking = self._get_ranking()
+        results = []
+        for rank, vekn, score in ranking:
+            if vekn in self.tournament.disqualified:
+                rank = ""
+            elif self.winner and rank == 1:
+                rank = "**WINNER** "
+            else:
+                rank = f"{rank}. "
+            results.append(f"- {rank}{self._player_display(vekn)} " f"{score}")
+        embed.description = "\n".join(results)
+        await self.send_embed(embed)
+
+
+class Results(Command):
+    async def __call__(self, *args):
+        self._check_judge()
         if not self.tournament.current_round:
-            raise CommandFailed("Tournament has not begun")
-        if len(self.tournament.results) < self.tournament.current_round:
-            self.tournament.results.append({})
-        if round and len(self.tournament.results) < round:
-            raise CommandFailed("Invalid round number")
+            raise CommandFailed("No seating has been done yet.")
+        if self.tournament.finals_seeding:
+            embed = discord.Embed(title="Finals", description="")
+            for i, vekn in enumerate(self.tournament.finals_seeding, 1):
+                result = self.tournament.results[-1].get(vekn, 0)
+                embed.description += f"{i}. {self._player_display(vekn)}: {result}VP\n"
+            await self.send_embed(embed)
+        else:
+            embed = discord.Embed(title=f"Round {self.tournament.current_round}")
+            result, tables, incorrect = self.tournament._compute_round_result()
+            if not result:
+                embed.description = "No table has reported their result yet."
+                await self.send_embed(embed)
+                return
+            incorrect = set(incorrect)
+            for i, table in enumerate(tables, 1):
+                status = "OK"
+                if sum(result[vekn].vp for vekn in table) == 0:
+                    status = "NOT REPORTED"
+                elif i in incorrect:
+                    status = "INVALID"
+                embed.add_field(
+                    name=f"Table {i} {status}",
+                    value="\n".join(
+                        f"{i}. {self._player_display(vekn)} {result[vekn]}"
+                        for i, vekn in enumerate(table, 1)
+                    ),
+                    inline=True,
+                )
+            await self.send_embed(embed)
 
-    async def report(self, vps):
+
+class Report(Command):
+    UPDATE = True
+
+    async def __call__(self, vps):
+        self._check_round()
+        if not self.tournament.reporting:
+            raise CommandFailed("No round in progress")
         vps = float(vps.replace(",", "."))
         vekn = self._get_vekn(self.message.author.id)
-        self._check_round()
         index = self.tournament.current_round - 1
-        if self.tournament.finals:
+        if self.tournament.finals_seeding:
             if vekn not in self.tournament.finals_seeding:
                 raise CommandFailed("You did not participate in the finals")
-        elif vekn not in [
+        elif vekn not in {
             self.tournament.player_numbers[n] for n in self.tournament.seating[index]
-        ]:
+        }:
             raise CommandFailed("You did not participate in this round")
         if vps > 5:
             raise CommandFailed("That seems like too many VPs")
-        self.tournament.results[index][vekn] = vps
+        if vps <= 0:
+            self.tournament.results[index].pop(vekn, None)
+        else:
+            self.tournament.results[index][vekn] = vps
         self.update()
         await self.send("Result registered")
 
-    async def fix(self, round, vekn, vps):
-        round = int(round)
-        vps = float(vps)
-        _, vekn = self._get_mentioned_player(vekn)
+
+class Fix(Command):
+    UPDATE = True
+
+    async def __call__(self, vekn, vps, round=None):
         self._check_judge()
+        _, vekn = self._get_mentioned_player(vekn)
+        vps = float(vps.replace(",", "."))
+        round = self.tournament.current_round if round is None else int(round)
         self._check_round(round)
         results = self.tournament.results[round - 1]
         if vps <= 0:
@@ -1066,165 +1340,46 @@ class Command:
         self.update()
         await self.send("Fixed")
 
-    async def validate(self, round, table, *args):
+
+class Validate(Command):
+    UPDATE = True
+
+    async def __call__(self, round, table, *args):
+        self._check_judge()
         round = int(round)
         table = int(table)
         reason = " ".join(args)
-        self._check_judge()
         self._check_round(round)
         self.tournament.overrides[f"{round}-{table}"] = reason
         self.update()
         await self.send("Validated")
 
-    async def close(self):
+
+class Close(Command):
+    UPDATE = True
+
+    async def __call__(self, force=None):
         self._check_judge()
+        force = force == "force"
         if self.channel.id in self.tournament.channels.values():
             raise CommandFailed(
                 "The `close` command must be issued outside of tournament channels"
             )
-        reports = []
-        scores, winner = self._get_total_scores(raise_on_incorrect=False)
-        results = []
-        last = [math.nan] * 3
-        rank = 1
-        j = 0
-        for vekn, score in sorted(
-            scores.items(),
-            key=lambda a: (
-                a[0] == winner,
-                a[0] in self.tournament.finals_seeding,
-                a[1],
-            ),
-            reverse=True,
-        ):
-            if vekn in self.tournament.dropped:
-                rank = "DQ"
-            else:
-                j += 1
-                if last != score[:3] and (
-                    vekn not in self.tournament.finals_seeding or j == 2
-                ):
-                    rank = j
-            last = score[:3]
-            number = self._get_player_number(vekn)
-            finals_position = ""
-            if vekn in self.tournament.finals_seeding:
-                finals_position = self.tournament.finals_seeding.index(vekn) + 1
-            results.append(
-                [
-                    number,
-                    vekn,
-                    self.tournament.registered.get(vekn, ""),
-                    (
-                        sum(1 for s in self.tournament.seating if number in s)
-                        + (1 if vekn in self.tournament.finals_seeding else 0)
-                    ),
-                    score[0],
-                    score[1],
-                    finals_position,
-                    rank,
-                ]
+        self._compute_scores(raise_on_incorrect=not force)
+        if not (force or self.tournament.finals_seeding):
+            raise CommandFailed(
+                "Tournament is not finished. "
+                "Use `archon close force` to close it nonetheless."
             )
-        data = io.StringIO()
-        writer = csv.writer(data)
-        writer.writerow(
-            [
-                "Player Num",
-                "V:EKN Num",
-                "Name",
-                "Games Played",
-                "Games Won",
-                "Total VPs",
-                "Finals Position",
-                "Rank",
-            ]
-        )
-        writer.writerows(results)
-        data = io.BytesIO(data.getvalue().encode("utf-8"))
-        reports.append(discord.File(data, filename="Report.csv"))
+        reports = [self._build_results_csv()]
         if self.tournament.registered and self.tournament.results:
-            results = []
-            for number, vekn in sorted(self.tournament.player_numbers.items()):
-                if vekn not in self.tournament.players:
-                    continue
-                name = self.tournament.registered.get(vekn, "UNKNOWN").split(" ", 1)
-                if len(name) < 2:
-                    name.append("")
-                results.append(
-                    [
-                        number,
-                        name[0],
-                        name[1],
-                        "",  # country
-                        vekn,
-                        (
-                            sum(1 for s in self.tournament.seating if number in s)
-                            + (1 if vekn in self.tournament.finals_seeding else 0)
-                        ),
-                        "DQ" if vekn in self.tournament.dropped else "",
-                    ]
-                )
-            data = io.StringIO()
-            writer = csv.writer(data)
-            writer.writerows(results)
-            data = io.BytesIO(data.getvalue().encode("utf-8"))
-            reports.append(discord.File(data, filename="Methuselahs.csv"))
-            for i, permutation in enumerate(self.tournament.seating, 1):
-                if len(self.tournament.results) < i:
-                    break
-                results = []
-                for j, table in enumerate(krcg.seating.Round(permutation), 1):
-                    for number in table:
-                        vekn = self.tournament.player_numbers[number]
-                        name = self.tournament.registered.get(vekn, "UNKNOWN").split(
-                            " ", 1
-                        )
-                        if len(name) < 2:
-                            name.append("")
-                        results.append(
-                            [
-                                number,
-                                name[0],
-                                name[1],
-                                j,
-                                self.tournament.results[i - 1].get(vekn, 0),
-                            ]
-                        )
-                    if len(table) < 5:
-                        results.append(["", "", "", "", ""])
-                data = io.StringIO()
-                writer = csv.writer(data)
-                writer.writerows(results)
-                data = io.BytesIO(data.getvalue().encode("utf-8"))
-                reports.append(discord.File(data, filename=f"Round {i}.csv"))
+            reports.append(self._build_methuselahs_csv())
+            reports.extend(f for f in self._build_rounds_csvs())
             if (
                 self.tournament.finals_seeding
-                and len(self.tournament.results) > self.tournament.rounds
+                and len(self.tournament.results) >= self.tournament.current_round
             ):
-                results = []
-                vekn_to_number = {
-                    v: k for k, v in self.tournament.player_numbers.items()
-                }
-                for i, vekn in enumerate(self.tournament.finals_seeding, 1):
-                    number = vekn_to_number[vekn]
-                    name = self.tournament.registered.get(vekn, "UNKNOWN").split(" ", 1)
-                    if len(name) < 2:
-                        name.append("")
-                    results.append(
-                        [
-                            number,
-                            name[0],
-                            name[1],
-                            1,
-                            i,
-                            self.tournament.results[-1].get(vekn, 0),
-                        ]
-                    )
-                data = io.StringIO()
-                writer = csv.writer(data)
-                writer.writerows(results)
-                data = io.BytesIO(data.getvalue().encode("utf-8"))
-                reports.append(discord.File(data, filename="Finals.csv"))
+                reports.append(self._build_finals_csv())
         await self.channel.send("Reports", files=reports)
         await asyncio.gather(
             *(
@@ -1240,25 +1395,126 @@ class Command:
                 if role.name.startswith(self.tournament.prefix)
             )
         )
-        db.close_tournament(self.connection, self.guild.id)
-        logger.info("closed tournament in %s", self.guild.name)
+        db.close_tournament(
+            self.connection, self.guild.id, self.category.id if self.category else None
+        )
+        logger.info("closed tournament %s in %s", self.tournament.name, self.guild.name)
         await self.send("Tournament closed")
 
+    def _build_results_csv(self):
+        data = []
+        for rank, vekn, score in self._get_ranking():
+            if vekn in self.tournament.disqualified:
+                rank = "DQ"
+            number = self._get_player_number(vekn)
+            finals_position = ""
+            if vekn in self.tournament.finals_seeding:
+                finals_position = self.tournament.finals_seeding.index(vekn) + 1
+            data.append(
+                [
+                    number,
+                    vekn,
+                    self.tournament.registered.get(vekn, ""),
+                    (
+                        sum(1 for s in self.tournament.seating if number in s)
+                        + (1 if vekn in self.tournament.finals_seeding else 0)
+                    ),
+                    score.gw,
+                    score.vp,
+                    finals_position,
+                    rank,
+                ]
+            )
+        return self._build_csv(
+            "Report.csv",
+            data,
+            columns=[
+                "Player Num",
+                "V:EKN Num",
+                "Name",
+                "Games Played",
+                "Games Won",
+                "Total VPs",
+                "Finals Position",
+                "Rank",
+            ],
+        )
 
-class ProgressUpdate:
-    def __init__(self, processes, message, embed):
-        self.processes = processes
-        self.message = message
-        self.embed = embed
-        self.progress = [0] * self.processes
+    def _build_methuselahs_csv(self):
+        data = []
+        for number, vekn in sorted(self.tournament.player_numbers.items()):
+            if vekn not in self.tournament.players:
+                continue
+            name = self.tournament.registered.get(vekn, "UNKNOWN").split(" ", 1)
+            if len(name) < 2:
+                name.append("")
+            data.append(
+                [
+                    number,
+                    name[0],
+                    name[1],
+                    "",  # country
+                    vekn,
+                    (
+                        sum(1 for s in self.tournament.seating if number in s)
+                        + (1 if vekn in self.tournament.finals_seeding else 0)
+                    ),
+                    "DQ" if vekn in self.tournament.disqualified else "",
+                ]
+            )
+        return self._build_csv("Methuselahs.csv", data)
 
-    def __call__(self, i):
-        async def progression(step, **kwargs):
-            self.progress[i] = (step / (ITERATIONS * self.processes)) * 100
-            progress = sum(self.progress)
-            if not progress % 5 and progress < 100:
-                progress = "▇" * int(progress // 5) + "▁" * (20 - int(progress // 5))
-                self.embed.description = progress
-                await self.message.edit(embed=self.embed)
+    def _build_rounds_csvs(self):
+        for i, permutation in enumerate(self.tournament.seating, 1):
+            if len(self.tournament.results) < i:
+                break
+            data = []
+            for j, table in enumerate(krcg.seating.Round(permutation), 1):
+                for number in table:
+                    vekn = self.tournament.player_numbers[number]
+                    first_name, last_name = self._get_first_last_name(vekn)
+                    data.append(
+                        [
+                            number,
+                            first_name,
+                            last_name,
+                            j,
+                            self.tournament.results[i - 1].get(vekn, 0),
+                        ]
+                    )
+                if len(table) < 5:
+                    data.append(["", "", "", "", ""])
+            yield self._build_csv(f"Round {i}.csv", data)
 
-        return progression
+    def _build_finals_csv(self):
+        data = []
+        vekn_to_number = self._vekn_to_number()
+        for i, vekn in enumerate(self.tournament.finals_seeding, 1):
+            number = vekn_to_number[vekn]
+            first_name, last_name = self._get_first_last_name(vekn)
+            data.append(
+                [
+                    number,
+                    first_name,
+                    last_name,
+                    1,  # table
+                    i,  # seat
+                    self.tournament.results[-1].get(vekn, 0),
+                ]
+            )
+        return self._build_csv("Finals.csv", data)
+
+    def _build_csv(self, filename, it, columns=None):
+        data = io.StringIO()
+        writer = csv.writer(data)
+        if columns:
+            writer.writerow(columns)
+        writer.writerows(it)
+        data = io.BytesIO(data.getvalue().encode("utf-8"))
+        return discord.File(data, filename=filename)
+
+    def _get_first_last_name(self, vekn):
+        name = self.tournament.registered.get(vekn, "UNKNOWN").split(" ", 1)
+        if len(name) < 2:
+            name.append("")
+        return name[0], name[1]

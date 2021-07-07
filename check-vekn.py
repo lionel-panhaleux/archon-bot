@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import aiohttp
 import asyncio
 import csv
@@ -16,13 +17,18 @@ async def main(data):
             data={"username": VEKN_LOGIN, "password": VEKN_PASSWORD},
         ) as response:
             result = await response.json()
-            print(result)
-            token = result["data"]["auth"]
+            try:
+                token = result["data"]["auth"]
+            except:  # noqa: E722
+                token = None
         if not token:
             print("Unable to authentify to VEKN", file=sys.stderr)
             return
         results = await asyncio.gather(
-            *(fetch_official_vekn(session, token, vekn) for vekn in data)
+            *(
+                fetch_official_vekn(session, token, vekn.strip(" #\r\n"))
+                for vekn in data
+            )
         )
         writer = csv.writer(sys.stdout)
         writer.writerows(results)
@@ -34,7 +40,7 @@ async def fetch_official_vekn(session, token, vekn):
         headers={"Authorization": f"Bearer {token}"},
     ) as response:
         result = await response.json()
-        print("Received: %s", result, file=sys.stderr)
+        # print("Received: %s", result, file=sys.stderr)
         result = result["data"]
         if isinstance(result, str):
             return False, f"VEKN returned an error: {result}"
@@ -47,6 +53,7 @@ async def fetch_official_vekn(session, token, vekn):
         if result["veknid"] != str(vekn):
             return False, "VEKN ID# not found"
         return (
+            vekn,
             True,
             result["firstname"] + " " + result["lastname"],
             result["countryname"],
@@ -54,5 +61,4 @@ async def fetch_official_vekn(session, token, vekn):
 
 
 if __name__ == "__main__":
-    data = []
-    asyncio.run(main(data))
+    asyncio.run(main(sys.stdin.readlines()))

@@ -20,7 +20,7 @@ class Guild:
         self.members = {}
         self._mock = mock
         self.default_role = 0
-        self._base_channel = Channel(self, 0, "base")
+        self._base_channel = self._create_channel("base")
 
     def get_role(self, uid):
         return self._roles.get(uid, None)
@@ -93,6 +93,13 @@ class Channel:
         self.deleted = True
 
 
+class Category:
+    def __init__(self, guild, uid, name):
+        self.id = uid
+        self.name = name
+        self.guild = guild
+
+
 class Message:
     def __init__(self, mock):
         self._mock = mock
@@ -102,6 +109,9 @@ class Message:
 
     async def edit(self, *args, **kwargs):
         self._mock.edit(*args, **kwargs)
+
+    async def delete(self, *args, **kwargs):
+        self._mock.delete(*args, **kwargs)
 
 
 class Role:

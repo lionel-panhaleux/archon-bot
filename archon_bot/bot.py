@@ -15,7 +15,7 @@ LOCKS = collections.defaultdict(asyncio.Lock)
 
 # ####################################################################### Logging config
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logging.basicConfig(level=logging.INFO, format="[%(levelname)7s] %(message)s")
 
 # ####################################################################### Discord client
 client = discord.Client(

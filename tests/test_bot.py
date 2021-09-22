@@ -708,6 +708,9 @@ async def test_league(client_mock):
     await bot.on_message(user_1.message("archon checkin-reset"))
     with conftest.message(client_mock) as message:
         assert message == "Check-in reset"
+    await bot.on_message(user_1.message("archon players"))
+    with conftest.message(client_mock) as message:
+        assert message == {"title": "Players list"}
     # ################################################################## seating round 2
     await bot.on_message(user_1.message("archon checkin-start"))
     with conftest.message(client_mock) as message:

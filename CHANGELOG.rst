@@ -1,7 +1,7 @@
 0.3 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Players list fixed: only checked-in players are now displayed
 
 
 0.2 (2021-07-07)

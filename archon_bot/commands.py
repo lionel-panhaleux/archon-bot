@@ -867,6 +867,7 @@ class Players(Command):
                 description="\n".join(
                     f"- {self._player_display(vekn)}"
                     for vekn in sorted(self.tournament.players.keys())
+                    if vekn not in self.tournament.dropped
                 ),
             )
         )

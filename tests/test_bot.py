@@ -48,11 +48,11 @@ async def test_tournament_sanctioned(client_mock):
             "title": "Archon help",
             "description": """\
 **Player commands**
-- `archon help`: Display this help message
+- `archon help`: display this help message
 - `archon status`: current tournament status
 - `archon checkin [ID#]`: check in for tournament (with VEKN ID# if required)
-- `archon report [VP#]`: Report your score for the round
-- `archon drop`: Drop from the tournament
+- `archon report [VP#]`: report your score for the round
+- `archon drop`: drop from the tournament
 
 **Judge commands**
 - `archon appoint [@user] (...[@user])`: appoint users as judges
@@ -72,15 +72,15 @@ async def test_tournament_sanctioned(client_mock):
 - `archon results`: check current round results
 - `archon standings`: display current standings
 - `archon finals`: start the finals
-- `archon caution [@player | ID#] [Reason]`: Issue a caution to a player
-- `archon warn [@player | ID#] [Reason]`: Issue a warning to a player
-- `archon disqualify [@player | ID#] [Reason]`: Disqualify a player
-- `archon close`: Close current tournament
+- `archon caution [@player | ID#] [Reason]`: issue a caution to a player
+- `archon warn [@player | ID#] [Reason]`: issue a warning to a player
+- `archon disqualify [@player | ID#] [Reason]`: disqualify a player
+- `archon close`: close current tournament
 
 **Judge private commands**
 - `archon upload`: upload the list of registered players (attach CSV file)
 - `archon players`: display the list of players and their current score
-- `archon player [@player | ID#]`: Display player information, cautions and warnings
+- `archon player [@player | ID#]`: display player information, cautions and warnings
 - `archon registrations`: display the list of registrations
 - `archon fix [@player | ID#] [VP#] {Round}`: fix a VP report (current round by default)
 - `archon validate [Round] [Table] [Reason]`: validate an odd VP situation
@@ -92,12 +92,12 @@ async def test_tournament_sanctioned(client_mock):
             "title": "Archon help",
             "description": (
                 "**Player commands**\n"
-                "- `archon help`: Display this help message\n"
+                "- `archon help`: display this help message\n"
                 "- `archon status`: current tournament status\n"
                 "- `archon checkin [ID#]`: check in for tournament (with VEKN "
                 "ID# if required)\n"
-                "- `archon report [VP#]`: Report your score for the round\n"
-                "- `archon drop`: Drop from the tournament\n"
+                "- `archon report [VP#]`: report your score for the round\n"
+                "- `archon drop`: drop from the tournament\n"
             ),
         }
     # unknown command displays help

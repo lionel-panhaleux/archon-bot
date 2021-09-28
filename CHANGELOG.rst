@@ -1,7 +1,9 @@
 0.4 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Fixed judge checkin
+- Improved archon help: now display judges commands in the judges channel only
+- Fixed round-add
 
 
 0.3 (2021-09-26)

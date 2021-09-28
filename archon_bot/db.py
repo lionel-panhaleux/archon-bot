@@ -26,7 +26,8 @@ async def init():
     for _ in range(CONNECTION.maxsize):
         CONNECTION.put_nowait(
             sqlite3.connect(
-                f"archon-{version}.db", detect_types=sqlite3.PARSE_DECLTYPES
+                "archon.db",
+                detect_types=sqlite3.PARSE_DECLTYPES,
             )
         )
     connection = await CONNECTION.get()

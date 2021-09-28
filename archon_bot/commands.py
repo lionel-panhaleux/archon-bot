@@ -328,6 +328,12 @@ class Command(metaclass=MetaCommand):
             )
         return mention.id if mention else None, vekn
 
+    def _get_table_role(self, table_number):
+        for role in self.guild.roles:
+            if role.name == f"{self.tournament.prefix}Table-{table_number}":
+                return role
+        raise CommandFailed(f"Role for Table {table_number} not found")
+
     def _vekn_to_number(self):
         """Returns the vekn -> number dict."""
         return {v: k for k, v in self.tournament.player_numbers.items()}
@@ -346,6 +352,27 @@ class Command(metaclass=MetaCommand):
                 "The number of players does not allow a round anymore: "
                 "additional players or drop outs required."
             )
+
+    def _register_player(self, vekn, name):
+        vekn = vekn.strip("-")
+        if not vekn:
+            vekn = f"TEMP_{len(self.tournament.registered) + 1}"
+        self.tournament.registered[vekn] = name
+        return vekn
+
+    def _assign_player_numbers(self):
+        round_players = self.round_players
+        vekn_to_number = self._vekn_to_number()
+        new_players = [vekn for vekn in round_players if vekn not in vekn_to_number]
+        random.shuffle(new_players)
+        for vekn, number in zip(
+            new_players,
+            range(
+                len(self.tournament.player_numbers) + 1,
+                len(self.tournament.player_numbers) + len(new_players) + 1,
+            ),
+        ):
+            self.tournament.player_numbers[number] = vekn
 
     async def _remove_tables(self):
         """Remove bot-created tables."""
@@ -426,25 +453,13 @@ class Command(metaclass=MetaCommand):
 class Help(Command):
     async def __call__(self, *args):
         embed = discord.Embed(title="Archon help", description="")
-        if self.tournament:
-            embed.description += """**Player commands**
-- `archon help`: display this help message
-- `archon status`: current tournament status
-- `archon checkin [ID#]`: check in for tournament (with VEKN ID# if required)
-- `archon report [VP#]`: report your score for the round
-- `archon drop`: drop from the tournament
-"""
-        else:
-            embed.description += (
-                "`archon open [name]`: start a new tournament or league"
-            )
-        if self._from_judge():
-            embed.description += """
-**Judge commands**
+        try:
+            self._check_judge_private()
+            embed.description += """**Judge commands**
 - `archon appoint [@user] (...[@user])`: appoint users as judges
 - `archon spectator [@user] (...[@user])`: appoint users as spectators
 - `archon register [ID#] [Full Name]`: register a user (Use `-` for auto ID)
-- `archon checkin [ID#] [@user]`: check user in (even if disqualified)
+- `archon checkin [ID#] [@user] ([name])`: check user in, register him (requires name)
 - `archon players`: display the list of players
 - `archon checkin-start`: open check-in
 - `archon checkin-stop`: stop check-in
@@ -454,7 +469,8 @@ class Help(Command):
 - `archon round-start`: seat the next round
 - `archon round-reset`: rollback the round seating
 - `archon round-finish`: stop reporting and close the current round
-- `archon round-add [@player | ID#]`: add a player to the round (on a 4 players table)
+- `archon round-add [@player | ID#]`: add a player (on a 4 players table)
+- `archon round-remove [@player | ID#]`: remove a player (from a 5 players table)
 - `archon results`: check current round results
 - `archon standings`: display current standings
 - `archon finals`: start the finals
@@ -469,8 +485,30 @@ class Help(Command):
 - `archon player [@player | ID#]`: display player information, cautions and warnings
 - `archon registrations`: display the list of registrations
 - `archon fix [@player | ID#] [VP#] {Round}`: fix a VP report (current round by default)
+- `archon fix-table [Table] [ID#] (...[ID#])`: reassign table (list players in order)
 - `archon validate [Round] [Table] [Reason]`: validate an odd VP situation
 """
+        except CommandFailed:
+            if self.tournament:
+                embed.description += """**Player commands**
+- `archon help`: display this help message
+- `archon status`: current tournament status
+- `archon checkin [ID#]`: check in for tournament (with VEKN ID# if required)
+- `archon report [VP#]`: report your score for the round
+- `archon drop`: drop from the tournament
+"""
+            else:
+                embed.description += (
+                    "`archon open [name]`: start a new tournament or league"
+                )
+            judge_channel = self.guild.get_channel(
+                self.tournament.channels.get(self.tournament.JUDGES_TEXT)
+            )
+            if judge_channel and self._from_judge():
+                embed.set_footer(
+                    text=f'Use "archon help" in the {judge_channel.mention} channel '
+                    "to list judges commands."
+                )
         await self.send_embed(embed)
 
 
@@ -559,13 +597,11 @@ class Spectator(Command):
 class Register(Command):
     UPDATE = True
 
-    async def __call__(self, vekn, *args):
+    async def __call__(self, vekn, *name_args):
         self._check_judge()
-        vekn = vekn.strip("-").strip("#")
-        name = " ".join(args)
-        if not vekn:
-            vekn = f"TEMP_{len(self.tournament.registered) + 1}"
-        self.tournament.registered[vekn] = name
+        vekn = vekn.strip("#")
+        name = " ".join(name_args)
+        vekn = self._register_player(vekn, name)
         self.update()
         await self.send(f"{name} registered with ID# {vekn}")
 
@@ -634,26 +670,29 @@ class Upload(Command):
 class Checkin(Command):
     UPDATE = True
 
-    async def __call__(self, vekn=None, mention=None):
+    async def __call__(self, vekn=None, mention=None, *name_args):
         self._check_tournament()
-        if not self.tournament.checkin:
+        vekn = (vekn or "").strip("#")
+        judge_role = self.judge_role
+        judge = self._from_judge()
+        if mention:
+            if not judge:
+                await self.send(
+                    f"Unexpected name: only a {judge_role.mention} "
+                    "can check in another user"
+                )
+            if len(self.message.mentions) > 1:
+                raise CommandFailed("You must mention a single player")
+            member = self.message.mentions[0] if self.message.mentions else None
+        else:
+            member = self.author
+        if not judge and not self.tournament.checkin:
             raise CommandFailed(
                 "Check-in is closed. Use `archon checkin-start` to open it"
             )
-        vekn = (vekn or "").strip("#")
-        judge_role = self.judge_role
-        if mention:
-            self._check_judge(f"Only a {judge_role.mention} can check in another user")
-            if len(self.message.mentions) > 1:
-                raise CommandFailed("You must mention a single player")
-            judge = True
-            member = self.message.mentions[0] if self.message.mentions else None
-        else:
-            judge = False
-            member = self.author
         id_to_vekn = {v: k for k, v in self.tournament.players.items()}
         if member and member.id in id_to_vekn:
-            previous_vekn = id_to_vekn[self.author.id]
+            previous_vekn = id_to_vekn[member.id]
             del self.tournament.players[previous_vekn]
             vekn = vekn or previous_vekn
         if self.tournament.registered:
@@ -663,10 +702,17 @@ class Checkin(Command):
                     "please provide your VEKN ID."
                 )
             if vekn not in self.tournament.registered:
-                raise CommandFailed(
-                    "User not registered for that tournament.\n"
-                    f"A {judge_role.mention} can use `archon register` to fix this."
-                )
+                if not judge:
+                    raise CommandFailed(
+                        "User not registered for that tournament.\n"
+                        f"A {judge_role.mention} can fix this."
+                    )
+                if not name_args:
+                    raise CommandFailed(
+                        "User is not registered for that tournament.\n"
+                        "Add the user's name to the command to register him."
+                    )
+                vekn = self._register_player(vekn, " ".join(name_args))
         if not vekn:
             vekn = len(self.tournament.players) + 1
         if (
@@ -697,6 +743,8 @@ class Checkin(Command):
             raise CommandFailed(
                 "This is a staggered tournament, it cannot accept more players."
             )
+        if not self.tournament.checkin:
+            self._assign_player_numbers()
         self.update()
         name = self.tournament.registered.get(vekn, "")
         await self.send(
@@ -1013,20 +1061,6 @@ class RoundStart(Command):
             )
         )
 
-    def _assign_player_numbers(self):
-        round_players = self.round_players
-        vekn_to_number = self._vekn_to_number()
-        new_players = [vekn for vekn in round_players if vekn not in vekn_to_number]
-        random.shuffle(new_players)
-        for vekn, number in zip(
-            new_players,
-            range(
-                len(self.tournament.player_numbers) + 1,
-                len(self.tournament.player_numbers) + len(new_players) + 1,
-            ),
-        ):
-            self.tournament.player_numbers[number] = vekn
-
     def _init_seating(self):
         round_players = self.round_players
         if len(round_players) in [6, 7, 11]:
@@ -1134,41 +1168,102 @@ class RoundAdd(Command):
 
     async def __call__(self, *args):
         self._check_judge
-        self._check_current_round_modifiable()
         if self.tournament.staggered:
             raise CommandFailed("Staggered tournament rounds cannot be modified")
         user_id, vekn = self._get_mentioned_player(*args[:1])
-        id_to_number = {v: k for k, v in self.tournament.player_numbers.items()}
-        number = id_to_number.get(vekn)
-        if not number:
-            raise CommandFailed("Player not properly registered")
         member = self.guild.get_member(user_id)
         if not member:
             raise CommandFailed("Player not in server")
-        if vekn in self.tournament.disqualified:
-            raise CommandFailed("Player is disqualified")
-        index = self.tournament.current_round - 1
+        vekn_to_number = self._vekn_to_number()
+        number = vekn_to_number.get(vekn)
+        # this should not happen
+        if not number:
+            raise CommandFailed(
+                "Player number not assigned - contact archon maintainer"
+            )
+
+        round_index = self.tournament.current_round - 1
+        player_index = 0
         tables = self.tournament._get_round_tables()
-        for i, table in enumerate(tables, 1):
+        for table_index, table in enumerate(tables, 1):
+            player_index += len(table)
             if len(table) > 4:
                 continue
-            prev = self.tournament.seating[index].index(id_to_number[table[3]])
-            self.tournament.seating[index].insert(prev + 1, number)
-            self.tournament.dropped.discard(vekn)
-            for role in self.guild.roles:
-                if role.name == f"{self.tournament.prefix}Table-{i}":
-                    await member.add_roles(
-                        role,
-                        reason=self.reason,
-                    )
-                    break
-            else:
-                raise CommandFailed("Table role not found")
-            self.update()
-            await self.send(f"Player seated 5th on table {i}")
+            self.tournament.seating[round_index].insert(player_index, number)
             break
         else:
             await self.send("No table available to sit this player in")
+            return
+        self.update()
+        tables = self.tournament._get_round_tables()
+        await member.add_roles(
+            self._get_table_role(table_index),
+            reason=self.reason,
+        )
+        await self.send(f"Player seated 5th on table {table_index}")
+        table_channel = self.guild.get_channel(
+            self.tournament.channels[f"table-{table_index}-text"]
+        )
+        await table_channel.send(
+            embed=discord.Embed(
+                title="New seating",
+                description="\n".join(
+                    f"- {j}. {self._player_display(vekn)}"[:200]
+                    for j, vekn in enumerate(tables[table_index - 1], 1)
+                ),
+            )
+        )
+
+
+class RoundRemove(Command):
+    UPDATE = True
+
+    async def __call__(self, *args):
+        raise CommandFailed("Not yet implemented.")
+        # self._check_judge
+        # if self.tournament.staggered:
+        #     raise CommandFailed("Staggered tournament rounds cannot be modified")
+        # user_id, vekn = self._get_mentioned_player(*args[:1])
+        # member = self.guild.get_member(user_id)
+        # if not member:
+        #     raise CommandFailed("Player not in server")
+        # if vekn not in self.round_players:
+        #     raise CommandFailed("Player is not playing this round")
+        # self.tournament.dropped.add(vekn)
+        # vekn_to_number = self._vekn_to_number()
+        # number = vekn_to_number.get(vekn)
+        # # this should not happen
+        # if not number:
+        #     raise CommandFailed(
+        #         "Player number bot assigned - contact archon maintainer"
+        #     )
+        # index = self.tournament.current_round - 1
+        # for i, table in enumerate(self.tournament.seating[index], 1):
+        #     if number in table:
+        #         if len(table) < 5:
+        #             raise CommandFailed(
+        #                 f"Table {i} has only 4 players, "
+        #                 "a 5th player is required before you can remove one."
+        #             )
+        #         table.remove(number)
+        #         self.update()
+        #         await member.remove_roles(self._get_table_role(i), reason=self.reason)
+        #         table_channel = table_channel = self.guild.get_channel(
+        #             self.tournament.channels[f"table-{i}-text"]
+        #         )
+        #         n_to_vekn = self.tournament.player_numbers
+        #         await table_channel.send(
+        #             embed=discord.Embed(
+        #                 title="New seating",
+        #                 description="\n".join(
+        #                     f"- {j}. {self._player_display(n_to_vekn[n])}"[:200]
+        #                     for j, n in enumerate(table, 1)
+        #                 ),
+        #             )
+        #         )
+        #         break
+        # else:
+        #     await self.send("Player not seated in this round")
 
 
 class Finals(Command):
@@ -1233,7 +1328,7 @@ class Finals(Command):
             embed=discord.Embed(
                 title="Finals",
                 description="\n".join(
-                    f"- {i} {self._player_display(vekn)} " f"{score}"
+                    f"- {i}. {self._player_display(vekn)} " f"{score}"
                     for i, (_, vekn, score) in enumerate(top_5, 1)
                 ),
             )
@@ -1340,6 +1435,36 @@ class Fix(Command):
             results[vekn] = vps
         self.update()
         await self.send("Fixed")
+
+
+class FixTable(Command):
+    UPDATE = True
+
+    async def __call__(self, table, *vekns):
+        raise CommandFailed("Not yet implemented.")
+        # self._check_judge()
+        # round = self.tournament.current_round
+        # seating = self.tournament.seating[round - 1]
+        # index = table - 1
+        # if index > len(seating):
+        #     raise CommandFailed("Invalid table number")
+        # if index == len(seating):
+        #     seating.append([])
+        # if len(vekns) < 4 or len(vekns) > 5:
+        #     raise CommandFailed("Invalid players count: needs to 4 or 5")
+        # already_seated = set(
+        #     self.tournament.player_numbers[i] for t in seating for i in t
+        # ) & set(vekns)
+        # if already_seated:
+        #     raise CommandFailed(
+        #         f"{already_seated} {'are' if len(already_seated) > 1 else 'is'} "
+        #         "already seated elsewhere"
+        #     )
+        # vekn_to_number = self._vekn_to_number()
+        # seating[index] = [vekn_to_number[vekn] for vekn in vekns]
+        # self.update()
+        # # TODO: Add/Remove roles, repost seating.
+        # await self.send(f"Table {table} fixed")
 
 
 class Validate(Command):

@@ -8,8 +8,6 @@ import re
 import unittest
 import unittest.mock
 
-from archon_bot import db
-
 
 class Guild:
     def __init__(self, mock, uid=None):
@@ -151,7 +149,6 @@ class Member:
     def message(self, content, channel=None, attachment=None):
         mentions = []
         for mention in re.findall(r"<@([^>]*)>", content):
-            print(mention)
             if mention.startswith("&"):
                 mention = self.guild.get_role(mention[1:])
             else:
@@ -226,6 +223,6 @@ def client_mock():
     with unittest.mock.patch("archon_bot.bot.client", user=me) as obj:
         yield obj
     try:
-        os.remove(f"archon-{db.version}.db")
+        os.remove("archon.db")
     except FileNotFoundError:
         pass

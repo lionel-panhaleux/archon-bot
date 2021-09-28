@@ -37,6 +37,7 @@ async def test_tournament_sanctioned(client_mock):
     assert "TI-Judge" in roles
     assert roles["TI-Judge"] in conftest.me.roles
     assert roles["TI-Judge"] in user_1.roles
+    judges_channel = guild._get_channel("Judges")
 
     await bot.on_message(user_1.message("archon"))
     with conftest.message(client_mock) as message:
@@ -53,38 +54,13 @@ async def test_tournament_sanctioned(client_mock):
 - `archon checkin [ID#]`: check in for tournament (with VEKN ID# if required)
 - `archon report [VP#]`: report your score for the round
 - `archon drop`: drop from the tournament
-
-**Judge commands**
-- `archon appoint [@user] (...[@user])`: appoint users as judges
-- `archon spectator [@user] (...[@user])`: appoint users as spectators
-- `archon register [ID#] [Full Name]`: register a user (Use `-` for auto ID)
-- `archon checkin [ID#] [@user]`: check user in (even if disqualified)
-- `archon players`: display the list of players
-- `archon checkin-start`: open check-in
-- `archon checkin-stop`: stop check-in
-- `archon checkin-reset`: reset check-in
-- `archon checkin-all`: check-in all registered players
-- `archon staggered [rounds#]`: run a staggered tournament (6, 7, or 11 players)
-- `archon round-start`: seat the next round
-- `archon round-reset`: rollback the round seating
-- `archon round-finish`: stop reporting and close the current round
-- `archon round-add [@player | ID#]`: add a player to the round (on a 4 players table)
-- `archon results`: check current round results
-- `archon standings`: display current standings
-- `archon finals`: start the finals
-- `archon caution [@player | ID#] [Reason]`: issue a caution to a player
-- `archon warn [@player | ID#] [Reason]`: issue a warning to a player
-- `archon disqualify [@player | ID#] [Reason]`: disqualify a player
-- `archon close`: close current tournament
-
-**Judge private commands**
-- `archon upload`: upload the list of registered players (attach CSV file)
-- `archon players`: display the list of players and their current score
-- `archon player [@player | ID#]`: display player information, cautions and warnings
-- `archon registrations`: display the list of registrations
-- `archon fix [@player | ID#] [VP#] {Round}`: fix a VP report (current round by default)
-- `archon validate [Round] [Table] [Reason]`: validate an odd VP situation
 """,
+            "footer": {
+                "text": (
+                    'Use "archon help" in the <#Judges> channel '
+                    "to list judges commands."
+                )
+            },
         }
     await bot.on_message(user_2.message("archon help"))
     with conftest.message(client_mock) as message:
@@ -100,6 +76,44 @@ async def test_tournament_sanctioned(client_mock):
                 "- `archon drop`: drop from the tournament\n"
             ),
         }
+    await bot.on_message(user_1.message("archon help", channel=judges_channel))
+    with conftest.message(client_mock) as message:
+        assert message == {
+            "title": "Archon help",
+            "description": """**Judge commands**
+- `archon appoint [@user] (...[@user])`: appoint users as judges
+- `archon spectator [@user] (...[@user])`: appoint users as spectators
+- `archon register [ID#] [Full Name]`: register a user (Use `-` for auto ID)
+- `archon checkin [ID#] [@user] ([name])`: check user in, register him (requires name)
+- `archon players`: display the list of players
+- `archon checkin-start`: open check-in
+- `archon checkin-stop`: stop check-in
+- `archon checkin-reset`: reset check-in
+- `archon checkin-all`: check-in all registered players
+- `archon staggered [rounds#]`: run a staggered tournament (6, 7, or 11 players)
+- `archon round-start`: seat the next round
+- `archon round-reset`: rollback the round seating
+- `archon round-finish`: stop reporting and close the current round
+- `archon round-add [@player | ID#]`: add a player (on a 4 players table)
+- `archon round-remove [@player | ID#]`: remove a player (from a 5 players table)
+- `archon results`: check current round results
+- `archon standings`: display current standings
+- `archon finals`: start the finals
+- `archon caution [@player | ID#] [Reason]`: issue a caution to a player
+- `archon warn [@player | ID#] [Reason]`: issue a warning to a player
+- `archon disqualify [@player | ID#] [Reason]`: disqualify a player
+- `archon close`: close current tournament
+
+**Judge private commands**
+- `archon upload`: upload the list of registered players (attach CSV file)
+- `archon players`: display the list of players and their current score
+- `archon player [@player | ID#]`: display player information, cautions and warnings
+- `archon registrations`: display the list of registrations
+- `archon fix [@player | ID#] [VP#] {Round}`: fix a VP report (current round by default)
+- `archon fix-table [Table] [ID#] (...[ID#])`: reassign table (list players in order)
+- `archon validate [Round] [Table] [Reason]`: validate an odd VP situation
+""",
+        }
     # unknown command displays help
     await bot.on_message(user_1.message("archon foobar"))
     with conftest.message(client_mock, all=True) as messages:
@@ -114,16 +128,12 @@ async def test_tournament_sanctioned(client_mock):
         assert message == "Spectator(s) appointed"
     assert roles["TI-Spectator"] in user_3.roles
     registrations = conftest.File(
-        ("1234567,Alice\n" "2345678,Bob\n" "3456789,Charles\n" "4567890,Doug\n").encode(
-            "utf-8"
-        )
+        ("1234567,Alice\n" "2345678,Bob\n" "3456789,Charles\n").encode("utf-8")
     )
     registrations.seek(0)
     await bot.on_message(user_1.message("archon upload", attachment=registrations))
     with conftest.message(client_mock) as message:
         assert message == "This command can only be issued in the <#Judges> channel"
-
-    judges_channel = guild._get_channel("Judges")
 
     await bot.on_message(
         user_1.message(
@@ -131,16 +141,13 @@ async def test_tournament_sanctioned(client_mock):
         )
     )
     with conftest.message(client_mock) as message:
-        assert message == "4 players registered"
+        assert message == "3 players registered"
     await bot.on_message(user_1.message("archon registrations", channel=judges_channel))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Registrations",
             "description": (
-                "- Alice #1234567 \n"
-                "- Bob #2345678 \n"
-                "- Charles #3456789 \n"
-                "- Doug #4567890 \n"
+                "- Alice #1234567 \n" "- Bob #2345678 \n" "- Charles #3456789 \n"
             ),
         }
     await bot.on_message(user_1.message("archon"))
@@ -152,6 +159,7 @@ async def test_tournament_sanctioned(client_mock):
     charles = guild._create_member(345, "Charles")
     doug = guild._create_member(456, "Doug")
     emili = guild._create_member(567, "Emili")
+    frank = guild._create_member(789, "Frank")  # 678 is emili2 - see after round 1
     await bot.on_message(alice.message("archon checkin 1234567"))
     with conftest.message(client_mock) as message:
         assert message == "Check-in is closed. Use `archon checkin-start` to open it"
@@ -178,8 +186,7 @@ async def test_tournament_sanctioned(client_mock):
     await bot.on_message(bob.message("archon checkin 666"))
     with conftest.message(client_mock) as message:
         assert message == (
-            "User not registered for that tournament.\n"
-            "A <@&1> can use `archon register` to fix this."
+            "User not registered for that tournament.\nA <@&1> can fix this."
         )
     await bot.on_message(bob.message("archon checkin 1234567"))
     with conftest.message(client_mock) as message:
@@ -193,10 +200,22 @@ async def test_tournament_sanctioned(client_mock):
     await bot.on_message(charles.message("archon checkin 3456789"))
     with conftest.message(client_mock) as message:
         assert message == "<@345> checked in as Charles #3456789"
+    # ################################################################ late registration
     await bot.on_message(doug.message("archon checkin 4567890"))
     with conftest.message(client_mock) as message:
-        assert message == "<@456> checked in as Doug #4567890"
-    # ################################################################ late registration
+        assert message == (
+            "User not registered for that tournament.\nA <@&1> can fix this."
+        )
+    await bot.on_message(user_1.message("archon checkin 4567890 <@456>"))
+    with conftest.message(client_mock) as message:
+        assert message == (
+            "User is not registered for that tournament.\n"
+            "Add the user's name to the command to register him."
+        )
+    await bot.on_message(user_1.message("archon checkin 4567890 <@456> Doug"))
+    with conftest.message(client_mock) as message:
+        assert message == ("<@456> checked in as Doug #4567890")
+    # <@456> checked in as Doug #4567890
     await bot.on_message(user_1.message("archon register 5678901 Emili"))
     with conftest.message(client_mock) as message:
         assert message == "Emili registered with ID# 5678901"
@@ -362,38 +381,55 @@ async def test_tournament_sanctioned(client_mock):
         assert doug._roles_names == {"TI-Table-1"}
         assert emili._roles_names == set()
         assert emili2._roles_names == {"TI-Table-1"}
-    await bot.on_message(emili2.message("archon report 4"))
+    # ########################################################## post seating add/remove
+    await bot.on_message(user_1.message("archon round-add <@789>"))
+    with conftest.message(client_mock) as message:
+        assert message == "<@789> has not checked in"
+    await bot.on_message(user_1.message("archon checkin 7890123 <@789> Frank"))
+    with conftest.message(client_mock) as message:
+        assert message == ("<@789> checked in as Frank #7890123")
+    await bot.on_message(user_1.message("archon round-add <@789>"))
+    with conftest.message(client_mock, all=True) as messages:
+        assert messages[0] == "Player seated 5th on table 1"
+        assert messages[1]["title"] == "New seating"
+        assert "Frank #7890123 <@789>" in messages[1]["description"]
+    assert frank._roles_names == {"TI-Table-1"}
+    await bot.on_message(emili2.message("archon report 5"))
     with conftest.message(client_mock) as message:
         assert message == "Result registered"
     await bot.on_message(user_1.message("archon results"))
     with conftest.message(client_mock) as message:
         assert message["title"] == "Round 2"
         assert message["fields"][0]["name"] == "Table 1 OK"
-        assert "Alice #1234567 <@123> (0GW0, 28TP)" in message["fields"][0]["value"]
-        assert "Emili #5678901 <@678> (1GW4.0, 60TP)" in message["fields"][0]["value"]
+        assert "Alice #1234567 <@123> (0GW0, 30TP)" in message["fields"][0]["value"]
+        assert "Emili #5678901 <@678> (1GW5.0, 60TP)" in message["fields"][0]["value"]
     # ######################################################################## standings
     await bot.on_message(user_1.message("archon standings"))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Standings",
             "description": (
-                "- 1. Alice #1234567 <@123> (1GW4.0, 88TP)\n"
-                "- 2. Emili #5678901 <@678> (1GW4.0, 84TP)\n"
-                "- 3. Charles #3456789 <@345> (0GW1.0, 76TP)\n"
-                "- 4. Doug #4567890 <@456> (0GW0, 52TP)\n"
+                "- 1. Emili #5678901 <@678> (1GW5.0, 84TP)\n"
+                "- 2. Alice #1234567 <@123> (1GW4.0, 90TP)\n"
+                "- 3. Charles #3456789 <@345> (0GW1.0, 78TP)\n"
+                "- 4. Doug #4567890 <@456> (0GW0, 54TP)\n"
+                "- 5. Frank #7890123 <@789> (0GW0, 30TP)\n"
                 "- **[D]** Bob #2345678 <@234> (0GW0, 24TP)"
             ),
         }
     # ########################################################################### finals
+    await bot.on_message(user_1.message("archon disqualify <@789>"))
+    with conftest.message(client_mock) as message:
+        assert message == "Player disqualifed"
     await bot.on_message(user_1.message("archon finals"))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Finals",
             "description": (
-                "- 1 Alice #1234567 <@123> (1GW4.0, 88TP)\n"
-                "- 2 Emili #5678901 <@678> (1GW4.0, 84TP)\n"
-                "- 3 Charles #3456789 <@345> (0GW1.0, 76TP)\n"
-                "- 4 Doug #4567890 <@456> (0GW0, 52TP)"
+                "- 1. Emili #5678901 <@678> (1GW5.0, 84TP)\n"
+                "- 2. Alice #1234567 <@123> (1GW4.0, 90TP)\n"
+                "- 3. Charles #3456789 <@345> (0GW1.0, 78TP)\n"
+                "- 4. Doug #4567890 <@456> (0GW0, 54TP)"
             ),
         }
     await bot.on_message(user_1.message("archon fix 4567890 1"))
@@ -404,8 +440,8 @@ async def test_tournament_sanctioned(client_mock):
         assert message == {
             "title": "Finals",
             "description": (
-                "1. Alice #1234567 <@123>: 0VP\n"
-                "2. Emili #5678901 <@678>: 0VP\n"
+                "1. Emili #5678901 <@678>: 0VP\n"
+                "2. Alice #1234567 <@123>: 0VP\n"
                 "3. Charles #3456789 <@345>: 0VP\n"
                 "4. Doug #4567890 <@456>: 1.0VP\n"
             ),
@@ -418,8 +454,8 @@ async def test_tournament_sanctioned(client_mock):
         assert message == {
             "title": "Finals",
             "description": (
-                "1. Alice #1234567 <@123>: 0VP\n"
-                "2. Emili #5678901 <@678>: 3.0VP\n"
+                "1. Emili #5678901 <@678>: 3.0VP\n"
+                "2. Alice #1234567 <@123>: 0VP\n"
                 "3. Charles #3456789 <@345>: 0VP\n"
                 "4. Doug #4567890 <@456>: 1.0VP\n"
             ),
@@ -429,10 +465,11 @@ async def test_tournament_sanctioned(client_mock):
         assert message == {
             "title": "Standings",
             "description": (
-                "- **WINNER** Emili #5678901 <@678> (2GW7.0, 84TP)\n"
-                "- 2. Alice #1234567 <@123> (1GW4.0, 88TP)\n"
-                "- 2. Charles #3456789 <@345> (0GW1.0, 76TP)\n"
-                "- 2. Doug #4567890 <@456> (0GW1.0, 52TP)\n"
+                "- **WINNER** Emili #5678901 <@678> (2GW8.0, 84TP)\n"
+                "- 2. Alice #1234567 <@123> (1GW4.0, 90TP)\n"
+                "- 2. Charles #3456789 <@345> (0GW1.0, 78TP)\n"
+                "- 2. Doug #4567890 <@456> (0GW1.0, 54TP)\n"
+                "- **[D]** Frank #7890123 <@789> (0GW0, 30TP)\n"
                 "- **[D]** Bob #2345678 <@234> (0GW0, 24TP)"
             ),
         }
@@ -448,11 +485,12 @@ async def test_tournament_sanctioned(client_mock):
             b"Player Num,V:EKN Num,Name,Games Played,Games Won,Total VPs,"
             b"Finals Position,Rank"
         )
-        assert lines[1][1:] == b",5678901,Emili,3,2,7.0,2,1"
-        assert lines[2][1:] == b",1234567,Alice,3,1,4.0,1,2"
+        assert lines[1][1:] == b",5678901,Emili,3,2,8.0,1,1"
+        assert lines[2][1:] == b",1234567,Alice,3,1,4.0,2,2"
         assert lines[3][1:] == b",3456789,Charles,3,0,1.0,3,2"
         assert lines[4][1:] == b",4567890,Doug,3,0,1.0,4,2"
-        assert lines[5][1:] == b",2345678,Bob,1,0,0,,DQ"
+        assert lines[5][1:] == b",7890123,Frank,1,0,0,,DQ"
+        assert lines[6][1:] == b",2345678,Bob,1,0,0,,DQ"
         assert message[1][0] == "Tournament closed"
         assert message[0][1]["files"][1].filename == "Methuselahs.csv"
         lines = message[0][1]["files"][1].fp.read().split(b"\r\n")
@@ -461,6 +499,7 @@ async def test_tournament_sanctioned(client_mock):
         assert b",Emili,,,5678901,3," in lines
         assert b",Doug,,,4567890,3," in lines
         assert b",Charles,,,3456789,3," in lines
+        assert b",Frank,,,7890123,1,DQ" in lines
         assert b",Bob,,,2345678,1,DQ" in lines
         assert message[0][1]["files"][2].filename == "Round 1.csv"
         lines = message[0][1]["files"][2].fp.read().split(b"\r\n")
@@ -474,14 +513,15 @@ async def test_tournament_sanctioned(client_mock):
         lines = message[0][1]["files"][3].fp.read().split(b"\r\n")
         lines = [a[1:] for a in lines]
         assert b",Alice,,1,0" in lines
-        assert b",Emili,,1,4.0" in lines
+        assert b",Emili,,1,5.0" in lines
         assert b",Charles,,1,0" in lines
         assert b",Doug,,1,0" in lines
+        assert b",Frank,,1,0" in lines
         assert message[0][1]["files"][4].filename == "Finals.csv"
         lines = message[0][1]["files"][4].fp.read().split(b"\r\n")
         lines = [a[1:] for a in lines]
-        assert b",Alice,,1,1,0" in lines
-        assert b",Emili,,1,2,3.0" in lines
+        assert b",Emili,,1,1,3.0" in lines
+        assert b",Alice,,1,2,0" in lines
         assert b",Charles,,1,3,0" in lines
         assert b",Doug,,1,4,1.0" in lines
 
@@ -803,8 +843,8 @@ async def test_league(client_mock):
     await bot.on_message(user_1.message("archon finals"))
     with conftest.message(client_mock) as message:
         assert message["title"] == "Finals"
-        assert message["description"].split("\n")[0] == "- 1 #2 <@234> (1GW5.5, 96TP)"
-        assert message["description"].split("\n")[-1] == "- 5 #4 <@456> (0GW0, 30TP)"
+        assert message["description"].split("\n")[0] == "- 1. #2 <@234> (1GW5.5, 96TP)"
+        assert message["description"].split("\n")[-1] == "- 5. #4 <@456> (0GW0, 30TP)"
 
 
 @conftest.async_test

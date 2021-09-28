@@ -1,4 +1,4 @@
-0.4 (unreleased)
+0.4 (2021-09-28)
 ----------------
 
 - Fixed judge checkin

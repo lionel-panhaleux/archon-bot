@@ -51,7 +51,8 @@ async def test_tournament_sanctioned(client_mock):
 **Player commands**
 - `archon help`: display this help message
 - `archon status`: current tournament status
-- `archon checkin [ID#]`: check in for tournament (with VEKN ID# if required)
+- `archon register [ID#] [Name]`: register a VEKN ID# for the tournament
+- `archon checkin [ID#]`: check in for the round (with VEKN ID# if required)
 - `archon report [VP#]`: report your score for the round
 - `archon drop`: drop from the tournament
 """,
@@ -70,7 +71,8 @@ async def test_tournament_sanctioned(client_mock):
                 "**Player commands**\n"
                 "- `archon help`: display this help message\n"
                 "- `archon status`: current tournament status\n"
-                "- `archon checkin [ID#]`: check in for tournament (with VEKN "
+                "- `archon register [ID#] [Name]`: register a VEKN ID# for the tournament\n"
+                "- `archon checkin [ID#]`: check in for the round (with VEKN "
                 "ID# if required)\n"
                 "- `archon report [VP#]`: report your score for the round\n"
                 "- `archon drop`: drop from the tournament\n"
@@ -83,7 +85,7 @@ async def test_tournament_sanctioned(client_mock):
             "description": """**Judge commands**
 - `archon appoint [@user] (...[@user])`: appoint users as judges
 - `archon spectator [@user] (...[@user])`: appoint users as spectators
-- `archon register [ID#] [Full Name]`: register a user (Use `-` for auto ID)
+- `archon register [ID#] [Name]`: register a user (Use `-` for auto ID)
 - `archon checkin [ID#] [@user] ([name])`: check user in, register him (requires name)
 - `archon players`: display the list of players
 - `archon checkin-start`: open check-in
@@ -91,6 +93,7 @@ async def test_tournament_sanctioned(client_mock):
 - `archon checkin-reset`: reset check-in
 - `archon checkin-all`: check-in all registered players
 - `archon staggered [rounds#]`: run a staggered tournament (6, 7, or 11 players)
+- `archon rounds-limit [#rounds]: limit the number of rounds per player`
 - `archon round-start`: seat the next round
 - `archon round-reset`: rollback the round seating
 - `archon round-finish`: stop reporting and close the current round
@@ -152,7 +155,15 @@ async def test_tournament_sanctioned(client_mock):
         }
     await bot.on_message(user_1.message("archon"))
     with conftest.message(client_mock) as message:
-        assert message == "Waiting for check-in to start"
+        assert message == {
+            "title": "Archon registration",
+            "description": (
+                "**Discord registration is required to play in this tournament**\n"
+                "Use `archon register [ID#] [Name]` to register for the tournament "
+                "with your VEKN ID#.\n"
+                "For example: `archon register 10000123 John Doe`"
+            ),
+        }
     # ######################################################################### check-in
     alice = guild._create_member(123, "Alice")
     bob = guild._create_member(234, "Bob")
@@ -218,10 +229,13 @@ async def test_tournament_sanctioned(client_mock):
     # <@456> checked in as Doug #4567890
     await bot.on_message(user_1.message("archon register 5678901 Emili"))
     with conftest.message(client_mock) as message:
-        assert message == "Emili registered with ID# 5678901"
-    await bot.on_message(user_1.message("archon checkin 5678901 <@567>"))
+        assert message == "Unable to authentify to VEKN"
+    await bot.on_message(user_1.message("archon register - Emili"))
     with conftest.message(client_mock) as message:
-        assert message == "<@567> checked in as Emili #5678901"
+        assert message == "Emili registered with ID# TEMP_5"
+    await bot.on_message(user_1.message("archon checkin TEMP_5 <@567>"))
+    with conftest.message(client_mock) as message:
+        assert message == "<@567> checked in as Emili #TEMP_5"
     await bot.on_message(user_1.message("archon status"))
     with conftest.message(client_mock) as message:
         assert message == ("**Testing It**\n5 players registered\n5 players checked in")
@@ -238,7 +252,7 @@ async def test_tournament_sanctioned(client_mock):
                 "- Bob #2345678 <@234>\n"
                 "- Charles #3456789 <@345>\n"
                 "- Doug #4567890 <@456>\n"
-                "- Emili #5678901 <@567>"
+                "- Emili #TEMP_5 <@567>"
             ),
         }
     await bot.on_message(user_1.message("archon round-start"))
@@ -248,7 +262,7 @@ async def test_tournament_sanctioned(client_mock):
         assert len(message["fields"]) == 1
         assert message["fields"][0]["name"] == "Table 1"
         assert "Alice #1234567 <@123>" in message["fields"][0]["value"]
-        assert "Emili #5678901 <@567>" in message["fields"][0]["value"]
+        assert "Emili #TEMP_5 <@567>" in message["fields"][0]["value"]
         assert alice._roles_names == {"TI-Table-1"}
         assert bob._roles_names == {"TI-Table-1"}
         assert charles._roles_names == {"TI-Table-1"}
@@ -257,7 +271,7 @@ async def test_tournament_sanctioned(client_mock):
         message = messages[1]
         assert message["title"] == "Seating"
         assert "Alice #1234567 <@123>" in message["description"]
-        assert "Emili #5678901 <@567>" in message["description"]
+        assert "Emili #TEMP_5 <@567>" in message["description"]
     # ############################################################### warnings, drop, DQ
     await bot.on_message(user_1.message("archon warn 2345678 slow play"))
     with conftest.message(client_mock) as message:
@@ -359,9 +373,9 @@ async def test_tournament_sanctioned(client_mock):
         assert message == (
             "This tournament requires registration, please provide your VEKN ID."
         )
-    await bot.on_message(emili2.message("archon checkin 5678901"))
+    await bot.on_message(emili2.message("archon checkin TEMP_5"))
     with conftest.message(client_mock) as message:
-        assert message == "<@678> checked in as Emili #5678901"
+        assert message == "<@678> checked in as Emili #TEMP_5"
     # ################################################################## seating round 2
     await bot.on_message(user_1.message("archon round-start"))
     with conftest.message(client_mock, all=True) as messages:
@@ -373,7 +387,7 @@ async def test_tournament_sanctioned(client_mock):
         assert len(message["fields"]) == 1
         assert message["fields"][0]["name"] == "Table 1"
         assert "Alice #1234567 <@123>" in message["fields"][0]["value"]
-        assert "Emili #5678901 <@678>" in message["fields"][0]["value"]
+        assert "Emili #TEMP_5 <@678>" in message["fields"][0]["value"]
         assert "Bob #2345678 <@234>" not in message["fields"][0]["value"]
         assert alice._roles_names == {"TI-Table-1"}
         assert bob._roles_names == set()
@@ -402,14 +416,14 @@ async def test_tournament_sanctioned(client_mock):
         assert message["title"] == "Round 2"
         assert message["fields"][0]["name"] == "Table 1 OK"
         assert "Alice #1234567 <@123> (0GW0, 30TP)" in message["fields"][0]["value"]
-        assert "Emili #5678901 <@678> (1GW5.0, 60TP)" in message["fields"][0]["value"]
+        assert "Emili #TEMP_5 <@678> (1GW5.0, 60TP)" in message["fields"][0]["value"]
     # ######################################################################## standings
     await bot.on_message(user_1.message("archon standings"))
     with conftest.message(client_mock) as message:
         assert message == {
             "title": "Standings",
             "description": (
-                "- 1. Emili #5678901 <@678> (1GW5.0, 84TP)\n"
+                "- 1. Emili #TEMP_5 <@678> (1GW5.0, 84TP)\n"
                 "- 2. Alice #1234567 <@123> (1GW4.0, 90TP)\n"
                 "- 3. Charles #3456789 <@345> (0GW1.0, 78TP)\n"
                 "- 4. Doug #4567890 <@456> (0GW0, 54TP)\n"
@@ -426,7 +440,7 @@ async def test_tournament_sanctioned(client_mock):
         assert message == {
             "title": "Finals",
             "description": (
-                "- 1. Emili #5678901 <@678> (1GW5.0, 84TP)\n"
+                "- 1. Emili #TEMP_5 <@678> (1GW5.0, 84TP)\n"
                 "- 2. Alice #1234567 <@123> (1GW4.0, 90TP)\n"
                 "- 3. Charles #3456789 <@345> (0GW1.0, 78TP)\n"
                 "- 4. Doug #4567890 <@456> (0GW0, 54TP)"
@@ -440,7 +454,7 @@ async def test_tournament_sanctioned(client_mock):
         assert message == {
             "title": "Finals",
             "description": (
-                "1. Emili #5678901 <@678>: 0VP\n"
+                "1. Emili #TEMP_5 <@678>: 0VP\n"
                 "2. Alice #1234567 <@123>: 0VP\n"
                 "3. Charles #3456789 <@345>: 0VP\n"
                 "4. Doug #4567890 <@456>: 1.0VP\n"
@@ -454,7 +468,7 @@ async def test_tournament_sanctioned(client_mock):
         assert message == {
             "title": "Finals",
             "description": (
-                "1. Emili #5678901 <@678>: 3.0VP\n"
+                "1. Emili #TEMP_5 <@678>: 3.0VP\n"
                 "2. Alice #1234567 <@123>: 0VP\n"
                 "3. Charles #3456789 <@345>: 0VP\n"
                 "4. Doug #4567890 <@456>: 1.0VP\n"
@@ -465,7 +479,7 @@ async def test_tournament_sanctioned(client_mock):
         assert message == {
             "title": "Standings",
             "description": (
-                "- **WINNER** Emili #5678901 <@678> (2GW8.0, 84TP)\n"
+                "- **WINNER** Emili #TEMP_5 <@678> (2GW8.0, 84TP)\n"
                 "- 2. Alice #1234567 <@123> (1GW4.0, 90TP)\n"
                 "- 2. Charles #3456789 <@345> (0GW1.0, 78TP)\n"
                 "- 2. Doug #4567890 <@456> (0GW1.0, 54TP)\n"
@@ -485,7 +499,7 @@ async def test_tournament_sanctioned(client_mock):
             b"Player Num,V:EKN Num,Name,Games Played,Games Won,Total VPs,"
             b"Finals Position,Rank"
         )
-        assert lines[1][1:] == b",5678901,Emili,3,2,8.0,1,1"
+        assert lines[1][1:] == b",TEMP_5,Emili,3,2,8.0,1,1"
         assert lines[2][1:] == b",1234567,Alice,3,1,4.0,2,2"
         assert lines[3][1:] == b",3456789,Charles,3,0,1.0,3,2"
         assert lines[4][1:] == b",4567890,Doug,3,0,1.0,4,2"
@@ -496,7 +510,7 @@ async def test_tournament_sanctioned(client_mock):
         lines = message[0][1]["files"][1].fp.read().split(b"\r\n")
         lines = [a[1:] for a in lines]
         assert b",Alice,,,1234567,3," in lines
-        assert b",Emili,,,5678901,3," in lines
+        assert b",Emili,,,TEMP_5,3," in lines
         assert b",Doug,,,4567890,3," in lines
         assert b",Charles,,,3456789,3," in lines
         assert b",Frank,,,7890123,1,DQ" in lines

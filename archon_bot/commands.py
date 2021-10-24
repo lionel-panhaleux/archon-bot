@@ -5,8 +5,10 @@ import io
 import itertools
 import math
 import logging
+import os
 import random
 
+import aiohttp
 import asgiref.sync
 import discord
 import stringcase
@@ -23,6 +25,8 @@ logger = logging.getLogger()
 
 #: Iterations for the seating algorithm (higher is best but takes longer)
 ITERATIONS = 20000
+VEKN_LOGIN = os.getenv("VEKN_LOGIN")
+VEKN_PASSWORD = os.getenv("VEKN_PASSWORD")
 
 
 class CommandFailed(Exception):
@@ -424,7 +428,20 @@ class Command(metaclass=MetaCommand):
         if self.tournament.finals_seeding:
             raise CommandFailed("Finals in progress")
         if not self.tournament.checkin:
-            await self.send("Waiting for check-in to start")
+            if self.tournament.registered:
+                await self.send_embed(
+                    discord.Embed(
+                        title="Archon registration",
+                        description=(
+                            "**Discord registration is required to play in this tournament**\n"
+                            "Use `archon register [ID#] [Name]` to register for the tournament "
+                            "with your VEKN ID#.\n"
+                            "For example: `archon register 10000123 John Doe`"
+                        ),
+                    )
+                )
+            else:
+                await self.send("Waiting for check-in to start")
             return
         if self.tournament.registered:
             await self.send_embed(
@@ -458,7 +475,7 @@ class Help(Command):
             embed.description += """**Judge commands**
 - `archon appoint [@user] (...[@user])`: appoint users as judges
 - `archon spectator [@user] (...[@user])`: appoint users as spectators
-- `archon register [ID#] [Full Name]`: register a user (Use `-` for auto ID)
+- `archon register [ID#] [Name]`: register a user (Use `-` for auto ID)
 - `archon checkin [ID#] [@user] ([name])`: check user in, register him (requires name)
 - `archon players`: display the list of players
 - `archon checkin-start`: open check-in
@@ -466,6 +483,7 @@ class Help(Command):
 - `archon checkin-reset`: reset check-in
 - `archon checkin-all`: check-in all registered players
 - `archon staggered [rounds#]`: run a staggered tournament (6, 7, or 11 players)
+- `archon rounds-limit [#rounds]: limit the number of rounds per player`
 - `archon round-start`: seat the next round
 - `archon round-reset`: rollback the round seating
 - `archon round-finish`: stop reporting and close the current round
@@ -493,7 +511,8 @@ class Help(Command):
                 embed.description += """**Player commands**
 - `archon help`: display this help message
 - `archon status`: current tournament status
-- `archon checkin [ID#]`: check in for tournament (with VEKN ID# if required)
+- `archon register [ID#] [Name]`: register a VEKN ID# for the tournament
+- `archon checkin [ID#]`: check in for the round (with VEKN ID# if required)
 - `archon report [VP#]`: report your score for the round
 - `archon drop`: drop from the tournament
 """
@@ -597,13 +616,54 @@ class Spectator(Command):
 class Register(Command):
     UPDATE = True
 
-    async def __call__(self, vekn, *name_args):
-        self._check_judge()
-        vekn = vekn.strip("#")
+    async def __call__(self, vekn=None, *name_args):
+        judge_role = self.judge_role
+        judge = self._from_judge()
+        # self._check_judge()
+        vekn = vekn.strip("#").strip("-")
         name = " ".join(name_args)
+        if vekn:
+            await self._check_vekn(vekn)
+        elif not judge:
+            raise CommandFailed(
+                f"Only a {judge_role.mention} " "can register a user with no VEKN ID"
+            )
         vekn = self._register_player(vekn, name)
         self.update()
         await self.send(f"{name} registered with ID# {vekn}")
+
+    async def _check_vekn(self, vekn):
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://www.vekn.net/api/vekn/login",
+                data={"username": VEKN_LOGIN, "password": VEKN_PASSWORD},
+            ) as response:
+                result = await response.json()
+                try:
+                    token = result["data"]["auth"]
+                except:  # noqa: E722
+                    token = None
+            if not token:
+                raise CommandFailed("Unable to authentify to VEKN")
+
+            async with session.get(
+                f"https://www.vekn.net/api/vekn/registry?filter={vekn}",
+                headers={"Authorization": f"Bearer {token}"},
+            ) as response:
+                result = await response.json()
+                result = result["data"]
+                if isinstance(result, str):
+                    raise CommandFailed(f"VEKN returned an error: {result}")
+                result = result["players"]
+                if len(result) > 1:
+                    raise CommandFailed("Incomplete VEKN ID#")
+                if len(result) < 1:
+                    raise CommandFailed("VEKN ID# not found")
+                result = result[0]
+                if result["veknid"] != str(vekn):
+                    raise CommandFailed("VEKN ID# not found")
+            # TODO: Not checking names for now. Future versions might
+            # vekn_name = result["firstname"] + " " + result["lastname"]
 
 
 class Status(Command):
@@ -665,6 +725,16 @@ class Upload(Command):
         self.tournament.registered = results
         self.update()
         await self.send(f"{len(self.tournament.registered)} players registered")
+
+
+class RoundsLimit(Command):
+    UPDATE = True
+
+    async def __call__(self, rounds_limit: int):
+        self._check_judge()
+        self.tournament.rounds_limit = rounds_limit
+        self.update()
+        await self.send("Rounds limited to {rounds_limit} rounds per player.")
 
 
 class Checkin(Command):
@@ -737,6 +807,16 @@ class Checkin(Command):
         if vekn in self.tournament.disqualified:
             raise CommandFailed("You've been disqualified, you cannot check in again.")
         self.tournament.dropped.discard(vekn)
+        rounds_played = sum(vekn in r for r in self.tournament.results)
+        if (
+            not judge
+            and self.tournament.rounds_limit
+            and rounds_played >= self.tournament.rounds_limit
+        ):
+            raise CommandFailed(
+                f"You played {rounds_played} rounds already, "
+                "you cannot check in for this round."
+            )
         self.tournament.players[vekn] = member.id if member else None
         # late checkin
         if self.tournament.staggered:

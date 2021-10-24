@@ -35,6 +35,7 @@ class Tournament:
         self.judge_role = kwargs.get("judge_role", 0)
         self.spectator_role = kwargs.get("spectator_role", 0)
         self.channels = kwargs.get("channels", {})
+        self.rounds_limit = kwargs.get("rounds_limit", 0)
         self.current_round = kwargs.get("current_round", 0)
         self.reporting = kwargs.get("reporting", False)
         self.registered = kwargs.get("registered", {})
@@ -66,6 +67,7 @@ class Tournament:
             "judge_role": self.judge_role,
             "spectator_role": self.spectator_role,
             "channels": self.channels,
+            "rounds_limit": self.rounds_limit,
             "current_round": self.current_round,
             "reporting": self.reporting,
             "registered": self.registered,  # ID -> name

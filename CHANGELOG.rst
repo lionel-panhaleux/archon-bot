@@ -1,7 +1,8 @@
 0.5 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Add self-registration for players
+- Add the possibility to limit the nuumber of rounds
 
 
 0.4 (2021-09-28)

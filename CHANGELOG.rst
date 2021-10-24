@@ -1,4 +1,4 @@
-0.5 (unreleased)
+0.5 (2021-10-24)
 ----------------
 
 - Add self-registration for players

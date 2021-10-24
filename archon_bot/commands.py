@@ -734,7 +734,7 @@ class RoundsLimit(Command):
         self._check_judge()
         self.tournament.rounds_limit = rounds_limit
         self.update()
-        await self.send("Rounds limited to {rounds_limit} rounds per player.")
+        await self.send(f"Rounds limited to {rounds_limit} rounds per player.")
 
 
 class Checkin(Command):

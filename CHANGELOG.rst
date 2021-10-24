@@ -1,7 +1,7 @@
 0.6 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Fix `rounds-limit` message
 
 
 0.5 (2021-10-24)

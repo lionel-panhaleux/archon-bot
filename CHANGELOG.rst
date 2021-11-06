@@ -2,6 +2,7 @@
 ----------------
 
 - Fix `rounds-limit` message
+- Fix checkin on round limits
 
 
 0.5 (2021-10-24)

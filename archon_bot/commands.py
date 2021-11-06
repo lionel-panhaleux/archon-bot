@@ -732,7 +732,7 @@ class RoundsLimit(Command):
 
     async def __call__(self, rounds_limit: int):
         self._check_judge()
-        self.tournament.rounds_limit = rounds_limit
+        self.tournament.rounds_limit = int(rounds_limit)
         self.update()
         await self.send(f"Rounds limited to {rounds_limit} rounds per player.")
 
@@ -811,7 +811,7 @@ class Checkin(Command):
         if (
             not judge
             and self.tournament.rounds_limit
-            and rounds_played >= self.tournament.rounds_limit
+            and rounds_played >= int(self.tournament.rounds_limit)
         ):
             raise CommandFailed(
                 f"You played {rounds_played} rounds already, "

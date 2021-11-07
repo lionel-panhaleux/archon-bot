@@ -433,10 +433,11 @@ class Command(metaclass=MetaCommand):
                     discord.Embed(
                         title="Archon registration",
                         description=(
-                            "**Discord registration is required to play in this tournament**\n"
-                            "Use `archon register [ID#] [Name]` to register for the tournament "
-                            "with your VEKN ID#.\n"
-                            "For example: `archon register 10000123 John Doe`"
+                            "**Discord registration is required to play in this "
+                            "tournament**\n"
+                            "Use `archon register [ID#] [Name]` to register for the "
+                            "tournament with your VEKN ID#.\n"
+                            "For example: `archon register 10000123 John Doe`."
                         ),
                     )
                 )

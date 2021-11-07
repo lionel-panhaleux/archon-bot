@@ -71,7 +71,8 @@ async def test_tournament_sanctioned(client_mock):
                 "**Player commands**\n"
                 "- `archon help`: display this help message\n"
                 "- `archon status`: current tournament status\n"
-                "- `archon register [ID#] [Name]`: register a VEKN ID# for the tournament\n"
+                "- `archon register [ID#] [Name]`: register a VEKN ID# for the "
+                "tournament\n"
                 "- `archon checkin [ID#]`: check in for the round (with VEKN "
                 "ID# if required)\n"
                 "- `archon report [VP#]`: report your score for the round\n"
@@ -161,7 +162,7 @@ async def test_tournament_sanctioned(client_mock):
                 "**Discord registration is required to play in this tournament**\n"
                 "Use `archon register [ID#] [Name]` to register for the tournament "
                 "with your VEKN ID#.\n"
-                "For example: `archon register 10000123 John Doe`"
+                "For example: `archon register 10000123 John Doe`."
             ),
         }
     # ######################################################################### check-in

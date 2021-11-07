@@ -747,7 +747,7 @@ class Checkin(Command):
         judge = self._from_judge()
         if mention:
             if not judge:
-                await self.send(
+                raise CommandFailed(
                     f"Unexpected name: only a {judge_role.mention} "
                     "can check in another user"
                 )

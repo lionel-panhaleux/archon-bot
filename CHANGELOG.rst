@@ -1,7 +1,7 @@
 0.7 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Fix checkin with spurious name
 
 
 0.6 (2021-11-06)

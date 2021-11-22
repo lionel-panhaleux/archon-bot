@@ -733,9 +733,13 @@ class RoundsLimit(Command):
 
     async def __call__(self, rounds_limit: int):
         self._check_judge()
-        self.tournament.rounds_limit = int(rounds_limit)
+        rounds_limit = int(rounds_limit)
+        self.tournament.rounds_limit = rounds_limit
         self.update()
-        await self.send(f"Rounds limited to {rounds_limit} rounds per player.")
+        await self.send(
+            f"Rounds limited to {rounds_limit} "
+            f"round{'s' if rounds_limit > 1 else ''} per player"
+        )
 
 
 class Checkin(Command):
@@ -808,15 +812,16 @@ class Checkin(Command):
         if vekn in self.tournament.disqualified:
             raise CommandFailed("You've been disqualified, you cannot check in again.")
         self.tournament.dropped.discard(vekn)
-        rounds_played = sum(vekn in r for r in self.tournament.results)
+        number = {v: k for k, v in self.tournament.player_numbers.items()}.get(vekn)
+        rounds_played = sum(number in r for r in self.tournament.seating)
         if (
             not judge
             and self.tournament.rounds_limit
             and rounds_played >= int(self.tournament.rounds_limit)
         ):
             raise CommandFailed(
-                f"You played {rounds_played} rounds already, "
-                "you cannot check in for this round."
+                f"You played {rounds_played} round{'s' if rounds_played > 1 else ''} "
+                "already, you cannot check in for this round."
             )
         self.tournament.players[vekn] = member.id if member else None
         # late checkin

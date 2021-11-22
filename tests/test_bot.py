@@ -702,6 +702,9 @@ async def test_league(client_mock):
             "- `archon register` or `archon upload` to register players (optional),\n"
             "- `archon checkin-start` to open the check-in for the first round."
         )
+    await bot.on_message(user_1.message("archon rounds-limit 1"))
+    with conftest.message(client_mock) as message:
+        assert message == "Rounds limited to 1 round per player"
     await bot.on_message(user_1.message("archon checkin-start"))
     with conftest.message(client_mock) as message:
         assert message == "Check-in is open"
@@ -771,6 +774,14 @@ async def test_league(client_mock):
     with conftest.message(client_mock) as message:
         assert message == "Check-in is open"
     frank = guild._create_member(678, "Frank")
+    await bot.on_message(alice.message("archon checkin"))
+    with conftest.message(client_mock) as message:
+        assert (
+            message == "You played 1 round already, you cannot check in for this round."
+        )
+    await bot.on_message(user_1.message("archon rounds-limit 2"))
+    with conftest.message(client_mock) as message:
+        assert message == "Rounds limited to 2 rounds per player"
     await bot.on_message(alice.message("archon checkin"))
     await bot.on_message(bob.message("archon checkin"))
     await bot.on_message(charles.message("archon checkin"))

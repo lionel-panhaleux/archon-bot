@@ -1,8 +1,13 @@
-0.11 (unreleased)
+1.0 (unreleased)
 -----------------
 
-- Nothing changed yet.
-
+- Alpha V1
+- Using PostgreSQL as backend database for easier external tooling
+- Clear separation between internal logic and bot interface for future interfaces
+- Using slash commands for better UX
+- Tests pending
+- Archon files export unavailable
+- Probably quite a few bugs remaining, to be field-tested
 
 0.10 (2022-01-03)
 -----------------

@@ -1,52 +1,27 @@
-import discord
+import hikari
 
 
-NO_TEXT = discord.PermissionOverwrite(
-    view_channel=False,
-    read_messages=False,
-    send_messages=False,
-    add_reactions=False,
+SPECTATE_TEXT = (
+    hikari.Permissions.VIEW_CHANNEL | hikari.Permissions.READ_MESSAGE_HISTORY
 )
-SPECTATE_TEXT = discord.PermissionOverwrite(
-    view_channel=True,
-    read_messages=True,
-    send_messages=False,
-    add_reactions=False,
+TEXT = (
+    hikari.Permissions.VIEW_CHANNEL
+    | hikari.Permissions.READ_MESSAGE_HISTORY
+    | hikari.Permissions.SEND_MESSAGES
+    | hikari.Permissions.SEND_MESSAGES_IN_THREADS
+    | hikari.Permissions.ADD_REACTIONS
 )
-TEXT = discord.PermissionOverwrite(
-    view_channel=True,
-    read_messages=True,
-    send_messages=True,
-    add_reactions=True,
+SPECTATE_VOICE = hikari.Permissions.VIEW_CHANNEL | hikari.Permissions.CONNECT
+VOICE = (
+    hikari.Permissions.VIEW_CHANNEL
+    | hikari.Permissions.CONNECT
+    | hikari.Permissions.SPEAK
 )
-NO_VOICE = discord.PermissionOverwrite(
-    view_channel=False,
-    connect=False,
-    speak=False,
-    mute_members=False,
-    priority_speaker=False,
-)
-SPECTATE_VOICE = discord.PermissionOverwrite(
-    view_channel=True,
-    connect=True,
-    speak=False,
-    priority_speaker=False,
-    mute_members=False,
-    deafen_members=False,
-)
-VOICE = discord.PermissionOverwrite(
-    view_channel=True,
-    connect=True,
-    speak=True,
-    priority_speaker=False,
-    mute_members=False,
-    deafen_members=False,
-)
-JUDGE_VOICE = discord.PermissionOverwrite(
-    view_channel=True,
-    connect=True,
-    speak=True,
-    priority_speaker=True,
-    mute_members=True,
-    deafen_members=True,
+JUDGE_VOICE = (
+    hikari.Permissions.VIEW_CHANNEL
+    | hikari.Permissions.CONNECT
+    | hikari.Permissions.SPEAK
+    | hikari.Permissions.PRIORITY_SPEAKER
+    | hikari.Permissions.MUTE_MEMBERS
+    | hikari.Permissions.DEAFEN_MEMBERS
 )

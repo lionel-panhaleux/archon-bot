@@ -2,6 +2,7 @@
 ----------------
 
 - Fix checkin with spurious name
+- Fix rounds limit
 
 
 0.6 (2021-11-06)

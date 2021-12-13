@@ -1,7 +1,7 @@
 0.8 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Improve VEKN API logging
 
 
 0.7 (2021-11-22)

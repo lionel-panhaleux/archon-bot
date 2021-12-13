@@ -645,6 +645,7 @@ class Register(Command):
                 except:  # noqa: E722
                     token = None
             if not token:
+                logger.error("Authentication failed: %s", result)
                 raise CommandFailed("Unable to authentify to VEKN")
 
             async with session.get(
@@ -654,7 +655,8 @@ class Register(Command):
                 result = await response.json()
                 result = result["data"]
                 if isinstance(result, str):
-                    raise CommandFailed(f"VEKN returned an error: {result}")
+                    logger.error("API error: %s", result)
+                    raise CommandFailed(f"VEKN returned an error")
                 result = result["players"]
                 if len(result) > 1:
                     raise CommandFailed("Incomplete VEKN ID#")

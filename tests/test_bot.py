@@ -149,7 +149,7 @@ async def test_tournament_sanctioned(client_mock):
     await bot.on_message(user_1.message("archon registrations", channel=judges_channel))
     with conftest.message(client_mock) as message:
         assert message == {
-            "title": "Registrations",
+            "title": "Registrations (3)",
             "description": (
                 "- Alice #1234567 \n" "- Bob #2345678 \n" "- Charles #3456789 \n"
             ),
@@ -247,7 +247,7 @@ async def test_tournament_sanctioned(client_mock):
     await bot.on_message(user_1.message("archon players"))
     with conftest.message(client_mock) as message:
         assert message == {
-            "title": "Players list",
+            "title": "Players list (5)",
             "description": (
                 "- Alice #1234567 <@123>\n"
                 "- Bob #2345678 <@234>\n"
@@ -762,7 +762,7 @@ async def test_league(client_mock):
         assert message == "Check-in reset"
     await bot.on_message(user_1.message("archon players"))
     with conftest.message(client_mock) as message:
-        assert message == {"title": "Players list"}
+        assert message == {"title": "Players list (0)"}
     # ################################################################## seating round 2
     await bot.on_message(user_1.message("archon checkin-start"))
     with conftest.message(client_mock) as message:

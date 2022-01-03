@@ -2,6 +2,7 @@
 ----------------
 
 - Fix VPs check on finals
+- Indicate count in Players and Registrations
 
 
 0.8 (2021-12-13)

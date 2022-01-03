@@ -997,13 +997,16 @@ class Player(Command):
 class Players(Command):
     async def __call__(self):
         self._check_judge()
+        players = [
+            vekn
+            for vekn in sorted(self.tournament.players.keys())
+            if vekn not in self.tournament.dropped
+        ]
         await self.send_embed(
             discord.Embed(
-                title="Players list",
+                title=f"Players list ({len(players)})",
                 description="\n".join(
-                    f"- {self._player_display(vekn)}"
-                    for vekn in sorted(self.tournament.players.keys())
-                    if vekn not in self.tournament.dropped
+                    f"- {self._player_display(vekn)}" for vekn in players
                 ),
             )
         )
@@ -1012,7 +1015,9 @@ class Players(Command):
 class Registrations(Command):
     async def __call__(self):
         self._check_judge_private()
-        embed = discord.Embed(title="Registrations", description="")
+        embed = discord.Embed(
+            title=f"Registrations ({len(self.tournament.registered)})", description=""
+        )
         for vekn in sorted(self.tournament.registered.keys()):
             s = f"- {self._player_display(vekn)}"
             embed.description += s + "\n"

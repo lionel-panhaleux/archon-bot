@@ -3,7 +3,7 @@
 
 - Fix VPs check on finals
 - Indicate count in Players and Registrations
-
+- Remove read access to finals text channels (so table password can be shared easily)
 
 0.8 (2021-12-13)
 ----------------

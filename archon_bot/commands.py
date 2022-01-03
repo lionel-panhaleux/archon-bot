@@ -1398,7 +1398,8 @@ class Finals(Command):
                 name="Finals",
                 category=self.category,
                 overwrites={
-                    self.guild.default_role: perm.SPECTATE_TEXT,
+                    self.guild.default_role: perm.NO_TEXT,
+                    spectator_role: perm.SPECTATE_TEXT,
                     judge_role: perm.TEXT,
                     table_role: perm.TEXT,
                 },

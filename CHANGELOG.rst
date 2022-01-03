@@ -1,4 +1,4 @@
-0.10 (unreleased)
+0.10 (2022-01-03)
 -----------------
 
 - Fix KRCG version to old seating for now.

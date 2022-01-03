@@ -1,7 +1,7 @@
 0.9 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Fix VPs check on finals
 
 
 0.8 (2021-12-13)

@@ -656,7 +656,7 @@ class Register(Command):
                 result = result["data"]
                 if isinstance(result, str):
                     logger.error("API error: %s", result)
-                    raise CommandFailed(f"VEKN returned an error")
+                    raise CommandFailed("VEKN returned an error")
                 result = result["players"]
                 if len(result) > 1:
                     raise CommandFailed("Incomplete VEKN ID#")

@@ -656,14 +656,8 @@ async def test_tournament_casual(client_mock):
     await bot.on_message(emili.message("archon report 1.5"))
     with conftest.message(client_mock) as message:
         assert message == "Result registered"
-    # invalid report: Emili cannot have scored 1 VP if Alice lives to time limit
-    await bot.on_message(user_1.message("archon close"))
-    with conftest.message(client_mock) as message:
-        assert message == "Incorrect results for finals"
-    await bot.on_message(user_1.message("archon fix <@567> 0"))
-    await bot.on_message(user_1.message("archon fix <@345> 1.5"))
-    with conftest.message(client_mock) as message:
-        assert message == "Fixed"
+    # Emili has scored 1 VP and Alice lives to time limit
+    # it's ok since we don't know the actual seating for the finals
     await bot.on_message(user_1.message("archon close"))
     with conftest.message(client_mock, all=True, with_params=True) as messages:
         message = messages[0]
@@ -678,9 +672,9 @@ async def test_tournament_casual(client_mock):
         )
         assert lines[1][1:] == b",1,,3,2,6.5,1,1"
         assert lines[2][1:] == b",2,,3,1,3.0,2,2"
-        assert lines[3][1:] == b",3,,3,0,2.5,4,2"
-        assert lines[4][1:] == b",4,,3,0,2.0,3,2"
-        assert lines[5][1:] == b",5,,3,0,0,5,2"
+        assert lines[3][1:] == b",4,,3,0,2.0,3,2"
+        assert lines[4][1:] == b",5,,3,0,1.5,5,2"
+        assert lines[5][1:] == b",3,,3,0,1.0,4,2"
         assert messages[1][0] == "Tournament closed"
 
 

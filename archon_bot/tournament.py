@@ -103,8 +103,10 @@ class Tournament:
         if not vp_result or len(self.seating) + bool(self.finals_seeding) < round:
             return round_result, [[]], []
         if round > len(self.seating):
+            finals = True
             tables = [self.finals_seeding]
         else:
+            finals = False
             tables = self._get_round_tables(round)
         incorrect = []
         for i, table in enumerate(tables, 1):
@@ -123,7 +125,10 @@ class Tournament:
             ) != len(table):
                 incorrect.append(i)
             scores = [vp_result.get(vekn, 0) for vekn in table]
-            for j, score in enumerate(scores):
-                if score % 1 and scores[j - 1] >= 1:
-                    incorrect.append(i)
+            # if someone has a VP, their prey does not get 0.5 from timeout
+            # don't check that on finals, since actual seating is unknown
+            if not finals:
+                for j, score in enumerate(scores):
+                    if score % 1 and scores[j - 1] >= 1:
+                        incorrect.append(i)
         return round_result, tables, incorrect

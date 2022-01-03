@@ -1,7 +1,7 @@
 0.10 (unreleased)
 -----------------
 
-- Nothing changed yet.
+- Fix KRCG version to old seating for now.
 
 
 0.9 (2022-01-03)
@@ -27,7 +27,7 @@
 0.6 (2021-11-06)
 ----------------
 
-- Fix `rounds-limit` message
+- Fix ``rounds-limit`` message
 - Fix checkin on round limits
 
 

@@ -10,7 +10,6 @@ from hikari.interactions.base_interactions import ResponseType
 from hikari.interactions.command_interactions import CommandInteraction
 from hikari.interactions.component_interactions import ComponentInteraction
 import krcg.deck
-import psycopg2
 
 import stringcase
 
@@ -105,14 +104,14 @@ class BaseInteraction:
     def __init__(
         self,
         bot: hikari.GatewayBot,
-        connection: psycopg2.connection,
+        connection,
         tournament_: tournament.Tournament,
         interaction: Union[CommandInteraction, ComponentInteraction],
         channel_id: hikari.Snowflake,
         category_id=None,
     ):
         self.bot: hikari.GatewayBot = bot
-        self.connection: psycopg2.connection = connection
+        self.connection = connection
         self.interaction: Union[CommandInteraction, ComponentInteraction] = interaction
         self.channel_id: hikari.Snowflake = channel_id
         self.author: hikari.InteractionMember = self.interaction.member
@@ -260,7 +259,7 @@ async def set_admin_permissions(
 
 
 async def set_judge_permissions(
-    connection: psycopg2.connection,
+    connection,
     bot: hikari.GatewayBot,
     guild_id: hikari.Snowflakeish,
 ) -> None:
@@ -805,20 +804,20 @@ class Appoint(BaseCommand):
     async def __call__(
         self,
         role: str,
-        user: Union[hikari.PartialUser, hikari.User, None] = None,
+        user: hikari.Snowflake = None,
     ):
         await self.deferred(flags=hikari.MessageFlag.EPHEMERAL)
         if role in ["JUDGE", "BOT"]:
             await self.bot.rest.add_role_to_member(
                 self.guild_id,
-                user.id,
+                user,
                 self.tournament.roles[self.tournament.JUDGE],
                 reason=self.reason,
             )
         else:
             await self.bot.rest.add_role_to_member(
                 self.guild_id,
-                user.id,
+                user,
                 self.tournament.roles[self.tournament.SPECTATOR],
                 reason=self.reason,
             )
@@ -1486,7 +1485,10 @@ class Announce(BaseCommand):
         if self.tournament.state == tournament.TournamentState.REGISTRATION:
             embed = hikari.Embed(
                 title=f"{self.tournament.name} — Registrations open",
-                description=f"{self.tournament.players.count} players registered",
+                description=(
+                    f"{self.tournament.players.count} players registered\n"
+                    "**Use the `/register` command to register.**"
+                ),
             )
             if self.tournament.flags & tournament.TournamentFlag.VEKN_REQUIRED:
                 embed.add_field(

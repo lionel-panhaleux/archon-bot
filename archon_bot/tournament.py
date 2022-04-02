@@ -13,6 +13,7 @@ import asgiref
 import hikari
 import krcg.deck
 import krcg.seating
+import krcg.utils
 
 logger = logging.getLogger()
 ITERATIONS = 50000
@@ -298,6 +299,7 @@ class Tournament:
         # figure out the VEKN if not provided
         # a temporary ID prefied with "P-" can be assigned if a judge calls the command
         # or if a VEKN is not required for this tournament (ie. unsanctioned)
+        temp_vekn = False
         if not vekn:
             if discord and discord in self.players:
                 vekn = self.players[discord].vekn
@@ -307,10 +309,13 @@ class Tournament:
                 )
             else:
                 vekn = f"P-{self.players.count + 1}"
+                temp_vekn = True
         # make sure not to overwrite a previous registration with the same VEKN ID
         # only a judge can override a previous vekn use
         # except if the previous player has dropped
         vekn = str(vekn)  # ensure string so it does not collide with player.number
+        if vekn[0] == "#":
+            vekn = vekn[1:]
         if vekn in self.players:
             if (
                 discord
@@ -359,8 +364,8 @@ class Tournament:
                 player.deck = deck.to_json()
             player.playing = self.state == TournamentState.CHECKIN
         else:
-            if self.flags & TournamentFlag.VEKN_REQUIRED and vekn[0] != "P":
-                name = name or await self._check_vekn(vekn)
+            if self.flags & TournamentFlag.VEKN_REQUIRED and not temp_vekn:
+                name = await self._check_vekn(vekn)
             if discord in self.players:
                 name = name or self.players[discord].name
                 deck = deck or self.players[discord].deck
@@ -376,6 +381,7 @@ class Tournament:
         return player
 
     async def _check_vekn(self, vekn: str) -> str:
+        logger.info("Checking VEKN# %s", vekn)
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 "https://www.vekn.net/api/vekn/login",

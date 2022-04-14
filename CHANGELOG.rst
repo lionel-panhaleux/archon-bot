@@ -1,4 +1,4 @@
-0.12 (unreleased)
+0.12 (2022-04-14)
 -----------------
 
 - Handle new VDB domain name (now vdb.im)

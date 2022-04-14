@@ -61,7 +61,7 @@ async def on_connected(event: hikari.GuildAvailableEvent) -> None:
             command = command.add_option(option)
         commands.append(command)
     try:
-        commands = await bot.rest.set_application_commands(
+        registered_commands = await bot.rest.set_application_commands(
             application=application,
             commands=commands,
             guild=guild,
@@ -69,9 +69,15 @@ async def on_connected(event: hikari.GuildAvailableEvent) -> None:
     except hikari.ForbiddenError:
         logger.error("Bot does not have commands scope in guild %s", guild)
         return
-    for command in commands:
-        COMMANDS[command.id] = COMMANDS[command.name]
-        COMMANDS_IDS[guild.id, command.name] = command.id
+    logger.info(
+        "setting application commands %s, received %s", commands, registered_commands
+    )
+    for command in registered_commands:
+        try:
+            COMMANDS[command.id] = COMMANDS[command.name]
+            COMMANDS_IDS[guild.id, command.name] = command.id
+        except KeyError:
+            logger.exception("Received unknow command %s", command)
     await set_admin_permissions(bot, guild.id)
     async with db.connection() as connection:
         await set_judge_permissions(connection, bot, guild.id)

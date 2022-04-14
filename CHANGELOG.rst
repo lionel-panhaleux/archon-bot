@@ -1,7 +1,7 @@
 0.13 (unreleased)
 -----------------
 
-- Nothing changed yet.
+- Improve command registration
 
 
 0.12 (2022-04-14)

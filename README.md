@@ -8,7 +8,6 @@
 
 Discord bot for V:TES tournament management.
 [Add it to your server](https://discordapp.com/oauth2/authorize?client_id=862326826193518622&scope=bot%20applications.commands&permissions=401730896)
-https://discordapp.com/oauth2/authorize?client_id=836223897186992199&scope=bot%20applications.commands&permissions=401730896
 
 The bot requires quite a few permissions to create roles and channels properly.
 Please do not tinker with the list of required permissions and grant them all

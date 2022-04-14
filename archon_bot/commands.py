@@ -644,6 +644,8 @@ class Register(BaseCommand):
             raise CommandFailed("No tournament in progress")
         await self.deferred(flags=hikari.MessageFlag.EPHEMERAL)
         judge = self._is_judge()
+        if user and user.id == self.author.id:
+            user = None
         if user and not judge:
             raise CommandFailed("Only a Judge can register another user")
         deck = None

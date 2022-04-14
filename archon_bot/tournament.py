@@ -540,8 +540,8 @@ class Tournament:
         )
         self.rounds = [Round(seating=r) for r in rounds]
         logger.info(
-            "{self.name}: optimised seating for round %s with score %s",
-            self.current_round,
+            "{self.name}: optimised seating for %s rounds with score %s",
+            rounds_count,
             score,
         )
         self.flags |= TournamentFlag.STAGGERED

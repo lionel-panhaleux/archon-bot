@@ -353,6 +353,9 @@ class Tournament:
             groups = list(groups)
             if len(groups) > 2 or abs(int(groups[0]) - int(groups[-1])) > 1:
                 raise CommandFailed("Invalid grouping in crypt")
+            banned = [c.name for c, _ in deck.cards(lambda c: c.banned)]
+            if any(banned):
+                raise CommandFailed(f"Banned cards included: {banned}")
         # upsert the player info
         if vekn in self.players:
             player = self.players[vekn]

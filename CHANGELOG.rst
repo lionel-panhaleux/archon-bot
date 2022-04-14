@@ -1,7 +1,8 @@
 0.14 (unreleased)
 -----------------
 
-- Nothing changed yet.
+- Fix command registration
+- Check registered decks for banned cards
 
 
 0.13 (2022-04-14)

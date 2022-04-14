@@ -23,6 +23,7 @@ CommandFailed = tournament.CommandFailed
 
 APPLICATION = []
 COMMANDS = {}
+COMMANDS_TO_REGISTER = {}
 COMPONENTS = {}
 COMMANDS_IDS = {}
 
@@ -32,12 +33,12 @@ class MetaCommand(type):
 
     def __new__(cls, name, bases, dict_):
         command_name = stringcase.spinalcase(name)
-        if command_name in COMMANDS:
+        if command_name in COMMANDS_TO_REGISTER:
             raise ValueError(f"Command {name} is already registered")
         klass = super().__new__(cls, name, bases, dict_)
         if command_name == "base-command":
             return klass
-        COMMANDS[command_name] = klass
+        COMMANDS_TO_REGISTER[command_name] = klass
         return klass
 
 
@@ -235,7 +236,7 @@ async def set_admin_permissions(
     """Set commands permissions for admins"""
     admin_commands = [
         COMMANDS_IDS[(guild_id, stringcase.spinalcase(command.__name__))]
-        for command in set(COMMANDS.values())
+        for command in set(COMMANDS_TO_REGISTER.values())
         if command.ACCESS == CommandAccess.ADMIN
     ]
     roles = await bot.rest.fetch_roles(guild_id)
@@ -274,12 +275,12 @@ async def set_judge_permissions(
     player_roles = player_roles[:10]
     judge_commands = [
         COMMANDS_IDS[(guild_id, stringcase.spinalcase(command.__name__))]
-        for command in set(COMMANDS.values())
+        for command in set(COMMANDS_TO_REGISTER.values())
         if command.ACCESS == CommandAccess.JUDGE
     ]
     player_commands = [
         COMMANDS_IDS[(guild_id, stringcase.spinalcase(command.__name__))]
-        for command in set(COMMANDS.values())
+        for command in set(COMMANDS_TO_REGISTER.values())
         if command.ACCESS == CommandAccess.PLAYER
     ]
     permissions = {

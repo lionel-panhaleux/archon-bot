@@ -10,6 +10,7 @@ import krcg.vtes
 from .commands import (
     APPLICATION,
     COMMANDS,
+    COMMANDS_TO_REGISTER,
     COMPONENTS,
     COMMANDS_IDS,
     CommandFailed,
@@ -53,7 +54,7 @@ async def on_connected(event: hikari.GuildAvailableEvent) -> None:
     application = APPLICATION[0]
     guild = event.guild
     commands = []
-    for name, klass in COMMANDS.items():
+    for name, klass in COMMANDS_TO_REGISTER.items():
         command = bot.rest.slash_command_builder(
             name, klass.DESCRIPTION
         ).set_default_permission(klass.ACCESS == CommandAccess.PUBLIC)
@@ -74,7 +75,7 @@ async def on_connected(event: hikari.GuildAvailableEvent) -> None:
     )
     for command in registered_commands:
         try:
-            COMMANDS[command.id] = COMMANDS[command.name]
+            COMMANDS[command.id] = COMMANDS_TO_REGISTER[command.name]
             COMMANDS_IDS[guild.id, command.name] = command.id
         except KeyError:
             logger.exception("Received unknow command %s", command)

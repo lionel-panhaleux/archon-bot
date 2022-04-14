@@ -1,7 +1,7 @@
 0.15 (unreleased)
 -----------------
 
-- Nothing changed yet.
+- Fix registering another user
 
 
 0.14 (2022-04-14)

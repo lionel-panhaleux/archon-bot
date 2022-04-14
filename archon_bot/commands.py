@@ -3,6 +3,7 @@ import enum
 import functools
 import itertools
 import logging
+from optparse import Option
 from typing import List, Optional, Union
 
 import hikari
@@ -610,14 +611,14 @@ class Register(BaseCommand):
     OPTIONS = [
         hikari.CommandOption(
             type=hikari.OptionType.STRING,
-            name="name",
-            description="Your name",
+            name="vekn",
+            description="Your VEKN ID#",
             is_required=False,
         ),
         hikari.CommandOption(
             type=hikari.OptionType.STRING,
-            name="vekn",
-            description="Your VEKN ID#",
+            name="name",
+            description="Your name",
             is_required=False,
         ),
         hikari.CommandOption(
@@ -636,23 +637,23 @@ class Register(BaseCommand):
 
     async def __call__(
         self,
-        name: Optional[str] = None,
         vekn: Optional[str] = None,
+        name: Optional[str] = None,
         decklist: Optional[str] = None,
-        user: Union[hikari.PartialUser, hikari.User, None] = None,
+        user: Option[hikari.Snowflake] = None,
     ):
         if not self.tournament:
             raise CommandFailed("No tournament in progress")
         await self.deferred(flags=hikari.MessageFlag.EPHEMERAL)
         judge = self._is_judge()
-        if user and user.id == self.author.id:
+        if user and user == self.author.id:
             user = None
         if user and not judge:
             raise CommandFailed("Only a Judge can register another user")
         deck = None
         if decklist:
             deck = krcg.deck.Deck.from_url(decklist)
-        discord_id = user.id if user else self.author.id
+        discord_id = user if user else self.author.id
         player = await self.tournament.add_player(
             vekn, name, discord=discord_id, deck=deck, judge=judge
         )
@@ -1521,7 +1522,7 @@ class Announce(BaseCommand):
                 name="Check-in",
                 value=(
                     "Once registered, you will need to check in before "
-                    f"{checkin_time} using the `/checkin` command"
+                    f"{checkin_time} using the `/check-in` command"
                 ),
             )
             await self.create_or_edit_response(embed=embed)
@@ -1532,7 +1533,7 @@ class Announce(BaseCommand):
                 title=(f"{self.tournament.name} — CHECK-IN — {current_round}"),
                 description=(
                     f"<@&{players_role}> Please confirm your participation "
-                    "using the `/checkin` command. Check-in is required to play.\n"
+                    "using the `/check-in` command. Check-in is required to play.\n"
                     "\nYou can use the `/status` command to verify your status."
                 ),
                 role_mentions=[players_role],
@@ -1556,7 +1557,7 @@ class Announce(BaseCommand):
                 title=(f"{self.tournament.name} — {current_round} finished"),
                 description=(
                     "Waiting for next round to begin"
-                    "using the `/checkin` command.\n"
+                    "using the `/check-in` command.\n"
                     "You can use the `/status` command to verify your status."
                 ),
             )

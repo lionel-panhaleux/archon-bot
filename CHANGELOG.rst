@@ -1,4 +1,4 @@
-0.14 (unreleased)
+0.14 (2022-04-14)
 -----------------
 
 - Fix command registration

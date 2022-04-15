@@ -1,7 +1,7 @@
 0.16 (unreleased)
 -----------------
 
-- Nothing changed yet.
+- Fix build
 
 
 0.15 (2022-04-15)

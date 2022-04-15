@@ -640,7 +640,7 @@ class Register(BaseCommand):
         vekn: Optional[str] = None,
         name: Optional[str] = None,
         decklist: Optional[str] = None,
-        user: Option[hikari.Snowflake] = None,
+        user: Optional[hikari.Snowflake] = None,
     ):
         if not self.tournament:
             raise CommandFailed("No tournament in progress")

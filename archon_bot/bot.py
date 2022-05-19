@@ -1,6 +1,4 @@
 """Discord Bot."""
-import asyncio
-import collections
 import logging
 import os
 
@@ -12,17 +10,13 @@ from .commands import (
     COMMANDS,
     COMMANDS_TO_REGISTER,
     COMPONENTS,
-    COMMANDS_IDS,
     CommandFailed,
-    CommandAccess,
+    build_command_tree,
 )
-from .commands import set_admin_permissions
-from .commands import set_judge_permissions
+
 from . import db
 from .tournament import Tournament
 
-#: Lock for write operations
-LOCKS = collections.defaultdict(asyncio.Lock)
 
 # ####################################################################### Logging config
 logger = logging.getLogger()
@@ -33,6 +27,8 @@ logging.basicConfig(
 
 # ####################################################################### Discord client
 bot = hikari.GatewayBot(os.getenv("DISCORD_TOKEN") or "")
+UPDATE = os.getenv("UPDATE")
+RESET = os.getenv("RESET")
 
 # ####################################################################### Init KRCG
 krcg.vtes.VTES.load()
@@ -44,50 +40,65 @@ async def on_ready(event: hikari.StartedEvent) -> None:
     """Login success informative log."""
     logger.info("Ready as %s", bot.get_me().username)
     await db.init()
+    if not APPLICATION:
+        APPLICATION.append(await bot.rest.fetch_application())
+    application = APPLICATION[-1]
+    commands = build_command_tree(bot.rest)
+    try:
+        registered_commands = await bot.rest.fetch_application_commands(
+            application=application,
+        )
+        if UPDATE or set(c.name for c in commands) ^ set(
+            c.name for c in registered_commands
+        ):
+            logger.debug("Updating commands: %s", commands)
+            registered_commands = await bot.rest.set_application_commands(
+                application=application,
+                commands=commands,
+            )
+    except hikari.ForbiddenError:
+        logger.exception("Bot does not have commands permission")
+        return
+    except hikari.BadRequestError:
+        logger.exception("Bot did not manage to update commands")
+        return
+    for command in registered_commands:
+        try:
+            COMMANDS[command.id] = COMMANDS_TO_REGISTER[command.name]
+        except KeyError:
+            logger.exception("Received unknow command %s", command)
 
 
 @bot.listen()
 async def on_connected(event: hikari.GuildAvailableEvent) -> None:
+    """Connected to a guild."""
     logger.info("Logged in %s as %s", event.guild.name, bot.get_me().username)
     if not APPLICATION:
         APPLICATION.append(await bot.rest.fetch_application())
-    application = APPLICATION[0]
-    guild = event.guild
-    commands = []
-    for name, klass in COMMANDS_TO_REGISTER.items():
-        command = bot.rest.slash_command_builder(
-            name, klass.DESCRIPTION
-        ).set_default_permission(klass.ACCESS == CommandAccess.PUBLIC)
-        for option in klass.OPTIONS:
-            command = command.add_option(option)
-        commands.append(command)
-    try:
-        registered_commands = await bot.rest.set_application_commands(
-            application=application,
-            commands=commands,
-            guild=guild,
-        )
-    except hikari.ForbiddenError:
-        logger.error("Bot does not have commands scope in guild %s", guild)
+    if not RESET:
         return
-    logger.info(
-        "setting application commands %s, received %s", commands, registered_commands
-    )
-    for command in registered_commands:
+    application = APPLICATION[-1]
+    guild = event.guild
+    if RESET:
         try:
-            COMMANDS[command.id] = COMMANDS_TO_REGISTER[command.name]
-            COMMANDS_IDS[guild.id, command.name] = command.id
-        except KeyError:
-            logger.exception("Received unknow command %s", command)
-    await set_admin_permissions(bot, guild.id)
-    async with db.connection() as connection:
-        await set_judge_permissions(connection, bot, guild.id)
+            await bot.rest.set_application_commands(
+                application=application,
+                guild=guild,
+                commands=[],
+            )
+        except hikari.ForbiddenError:
+            logger.error("Bot does not have commands scope in guild %s", guild)
+            return
+        except hikari.BadRequestError:
+            logger.error("Bot did not manage to update commands for guild %s", guild)
+            return
 
 
 async def _interaction_response(instance, interaction, content):
+    """Default response to interaction (in case of error)"""
     if instance:
         await instance.create_or_edit_response(
-            content, flags=hikari.MessageFlag.EPHEMERAL, embeds=[]
+            content, flags=hikari.MessageFlag.EPHEMERAL, embeds=[], components=[]
         )
     else:
         await interaction.create_initial_response(
@@ -95,11 +106,13 @@ async def _interaction_response(instance, interaction, content):
             content,
             flags=hikari.MessageFlag.EPHEMERAL,
             embeds=[],
+            components=[],
         )
 
 
 @bot.listen()
 async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
+    """Handle interactions (slash commands)."""
     logger.info("Interaction %s", event.interaction)
     if not event.interaction.guild_id:
         await _interaction_response(

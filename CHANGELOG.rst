@@ -1,7 +1,7 @@
 0.17 (unreleased)
 -----------------
 
-- Nothing changed yet.
+- Full working version with slash commands. Beta - a few bugs might remain.
 
 
 0.16 (2022-04-15)

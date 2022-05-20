@@ -1,4 +1,4 @@
-0.18 (unreleased)
+0.18 (2022-05-21)
 -----------------
 
 - Fix player number attribution

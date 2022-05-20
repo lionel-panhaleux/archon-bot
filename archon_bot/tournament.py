@@ -25,6 +25,10 @@ class CommandFailed(Exception):
     """A "normal" failure: a message explains why the command was not performed"""
 
 
+class ErrorDecklistRequired(CommandFailed):
+    """Specific error for missing decklist, to be able to provide a convenient clue"""
+
+
 class TournamentFlag(enum.IntFlag):
     VEKN_REQUIRED = enum.auto()  # whether a VEKN ID# is required for this tournament
     DECKLIST_REQUIRED = enum.auto()  # whether a decklist must be submitted
@@ -202,6 +206,11 @@ Rank = Tuple[int, str, Score]
 
 
 class PlayerDict(dict):
+    """Dictionnary of players.
+
+    TODO: compose instead, serialize next_number to avoid acrobatics (breaking change)
+    """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.count = 0
@@ -264,6 +273,9 @@ class Tournament:
         self.players: PlayerDict = PlayerDict()
         for p in kwargs.get("players", []):
             self.players.add(Player(**p))
+        self.players.next_number = (
+            max([p.number for p in self.players.iter_players()] + [0]) + 1
+        )
         self.dropped: Dict[str, DropReason] = {
             k: DropReason(v) for k, v in kwargs.get("dropped", {}).items()
         }
@@ -349,7 +361,7 @@ class Tournament:
         else:
             if self.flags & TournamentFlag.STAGGERED:
                 raise CommandFailed(
-                    "Tournament is staggered, noe more registration allowed."
+                    "Tournament is staggered, no more registration allowed."
                 )
         # check deck is tournament legal
         if deck:
@@ -412,7 +424,7 @@ class Tournament:
             and self.flags & TournamentFlag.DECKLIST_REQUIRED
             and not player.deck
         ):
-            raise CommandFailed("A decklist is required to participate")
+            raise ErrorDecklistRequired("A decklist is required to participate")
         return player
 
     async def _check_vekn(self, vekn: str) -> str:

@@ -208,7 +208,7 @@ class BaseInteraction:
             **kwargs,
         )
 
-    def update(self):
+    def update(self) -> None:
         """Update tournament data."""
         if not self.UPDATE:
             raise RuntimeError("Command is not marked as UPDATE")
@@ -220,19 +220,19 @@ class BaseInteraction:
             data,
         )
 
-    def _is_judge(self):
+    def _is_judge(self) -> bool:
         """Check whether the author is a judge."""
         judge_role_id = self.tournament.roles[self.tournament.JUDGE]
         return judge_role_id in self.author.role_ids
 
-    def _is_judge_channel(self):
+    def _is_judge_channel(self) -> bool:
         """Check wether the command was issued in the Judges private channel."""
         return (
             self.channel_id
             == self.tournament.channels[tournament.Tournament.JUDGE_TEXT]
         )
 
-    def _player_display(self, player_id: tournament.PlayerID):
+    def _player_display(self, player_id: tournament.PlayerID) -> str:
         """How to display a player."""
         player = self.tournament.players[player_id]
         return (
@@ -241,12 +241,17 @@ class BaseInteraction:
             + (f"<@{player.discord}>" if player.discord else "")
         )
 
+    def _deck_display(self, data: dict) -> str:
+        deck = krcg.deck.Deck()
+        deck.from_json(data)
+        return f"[{deck.name}]({deck.to_vdb()})"
+
     @property
-    def reason(self):
+    def reason(self) -> str:
         """Reason given for Discord logs on channel/role creations."""
         return f"{self.tournament.name} Tournament"
 
-    async def __call__(self):
+    async def __call__(self) -> None:
         """To implement in children classes"""
         raise NotImplementedError()
 
@@ -261,7 +266,7 @@ class BaseCommand(BaseInteraction, metaclass=MetaCommand):
     #: Main command this sub command is attached to, if any
     GROUP = None
 
-    async def deferred(self, flags: Optional[hikari.MessageFlag] = None):
+    async def deferred(self, flags: Optional[hikari.MessageFlag] = None) -> None:
         """Let Discord know we're working (displays the '...' on Discord).
 
         It's useful especially for commands that have a bit of compute time,
@@ -299,7 +304,7 @@ class BaseCommand(BaseInteraction, metaclass=MetaCommand):
 class BaseComponent(BaseInteraction):
     """Base class for all components"""
 
-    async def deferred(self, flags: Optional[hikari.MessageFlag] = None):
+    async def deferred(self, flags: Optional[hikari.MessageFlag] = None) -> None:
         """Let Discord know we're working (displays the '...' on Discord)."""
         await self.interaction.create_initial_response(
             ResponseType.DEFERRED_MESSAGE_UPDATE, flags=flags
@@ -346,7 +351,7 @@ class OpenTournament(BaseCommand):
         ),
     ]
 
-    async def __call__(self, name: str, rounds: Optional[int] = 0):
+    async def __call__(self, name: str, rounds: Optional[int] = 0) -> None:
         """Open the tournament, create channels and roles, then configure (chain)"""
         if self.tournament:
             raise CommandFailed("A tournament is already open here")
@@ -456,7 +461,7 @@ class ConfigureTournament(BaseCommand):
     DESCRIPTION = "JUDGE: Configure the tournament"
     OPTIONS = []
 
-    async def __call__(self):
+    async def __call__(self) -> None:
         # has been acknowledged/deferred already
         if hasattr(self.interaction, "custom_id"):
             if self.interaction.custom_id == "vekn-required":
@@ -591,7 +596,8 @@ class CloseTournament(BaseCommand):
     DESCRIPTION = "JUDGE: Close the tournament"
     OPTIONS = []
 
-    async def __call__(self):
+    async def __call__(self) -> None:
+        """Ask for confirmation, display confirm and cancel buttons"""
         if not self.tournament:
             raise CommandFailed("No tournament going on here")
         confirmation = (
@@ -620,9 +626,11 @@ class CloseTournament(BaseCommand):
         )
 
     class Confirmed(BaseComponent):
+        """When the confirm button is hit"""
+
         UPDATE = True
 
-        async def __call__(self):
+        async def __call__(self) -> None:
             await self.deferred()
             results = await asyncio.gather(
                 *(
@@ -665,6 +673,8 @@ class CloseTournament(BaseCommand):
                 )
 
     class Cancel(BaseComponent):
+        """When the cancel button is hit"""
+
         UPDATE = False
 
         async def __call__(self):
@@ -678,7 +688,10 @@ class CloseTournament(BaseCommand):
 
 
 class Register(BaseCommand):
-    """Registration (auto-check-in if the check-in is open)"""
+    """Registration (auto-check-in if the check-in is open).
+
+    The same class and code is used for CheckIn.
+    """
 
     UPDATE = True
     DESCRIPTION = "Register for this tournament"
@@ -708,7 +721,7 @@ class Register(BaseCommand):
         vekn: Optional[str] = None,
         name: Optional[str] = None,
         decklist: Optional[str] = None,
-    ):
+    ) -> None:
         if not self.tournament:
             raise CommandFailed("No tournament in progress")
         await self.deferred(flags=hikari.MessageFlag.EPHEMERAL)
@@ -716,9 +729,22 @@ class Register(BaseCommand):
         if decklist:
             deck = krcg.deck.Deck.from_url(decklist)
         discord_id = self.author.id
-        player = await self.tournament.add_player(
-            vekn, name, discord=discord_id, deck=deck, judge=False
-        )
+        try:
+            player = await self.tournament.add_player(
+                vekn, name, discord=discord_id, deck=deck, judge=False
+            )
+        except tournament.ErrorDecklistRequired:
+            await self.create_or_edit_response(
+                embed=hikari.Embed(
+                    title="Decklist required",
+                    description=(
+                        "You need to provide a decklist with the `/register` command. "
+                        "You do not need to provide the other parameters (eg. `vekn`) "
+                        "if you have done so already: only your decklist will update."
+                    ),
+                )
+            )
+            return
         await self.bot.rest.add_role_to_member(
             self.guild_id,
             discord_id,
@@ -791,14 +817,23 @@ class RegisterPlayer(BaseCommand):
         name: Optional[str] = None,
         decklist: Optional[str] = None,
         user: Optional[hikari.Snowflake] = None,
-    ):
-        await self.deferred(flags=hikari.MessageFlag.EPHEMERAL)
+    ) -> None:
+        await self.deferred()
         deck = None
         if decklist:
             deck = krcg.deck.Deck.from_url(decklist)
-        player = await self.tournament.add_player(
-            vekn, name, discord=user, deck=deck, judge=True
-        )
+        try:
+            player = await self.tournament.add_player(
+                vekn, name, discord=user, deck=deck, judge=True
+            )
+        except tournament.ErrorDecklistRequired:
+            await self.create_or_edit_response(
+                embed=hikari.Embed(
+                    title="Decklist required",
+                    description="Check-in is open: you need to provide a decklist.",
+                )
+            )
+            return
         if user:
             await self.bot.rest.add_role_to_member(
                 self.guild_id,
@@ -807,9 +842,10 @@ class RegisterPlayer(BaseCommand):
                 reason=self.reason,
             )
         self.update()
-        description = "Player is successfully registered for the tournament."
+        player_display = self._player_display(player.vekn)
+        description = f"{player_display} is successfully registered for the tournament."
         if player.playing:
-            description = "Player is ready to play."
+            description = f"{player_display} is ready to play."
         elif (
             self.tournament.flags & tournament.TournamentFlag.DECKLIST_REQUIRED
             and not player.deck
@@ -835,8 +871,6 @@ class RegisterPlayer(BaseCommand):
                 title="Player registered",
                 description=description,
             ),
-            flags=hikari.MessageFlag.EPHEMERAL,
-            components=[],
         )
 
 
@@ -857,7 +891,7 @@ class OpenCheckIn(BaseCommand):
     DESCRIPTION = "JUDGE: Open check-in to players for next round"
     OPTIONS = []
 
-    async def __call__(self):
+    async def __call__(self) -> None:
         self.tournament.open_checkin()
         self.update()
         await self.create_or_edit_response("Check-in is open")
@@ -871,7 +905,7 @@ class Drop(BaseCommand):
     DESCRIPTION = "Drop from the tournament"
     OPTIONS = []
 
-    async def __call__(self, user: Union[hikari.PartialUser, hikari.User, None] = None):
+    async def __call__(self) -> None:
         self.tournament.drop(self.author.id)
         self.update()
         await self.create_or_edit_response(
@@ -903,12 +937,11 @@ class DropPlayer(BaseCommand):
 
     async def __call__(
         self, user: Optional[hikari.Snowflake] = None, vekn: Optional[str] = None
-    ):
+    ) -> None:
         self.tournament.drop(user or vekn)
         self.update()
         await self.create_or_edit_response(
-            "Dropped",
-            flags=hikari.MessageFlag.EPHEMERAL,
+            f"Dropped {self._player_display(user or vekn)}"
         )
 
 
@@ -947,7 +980,7 @@ class Disqualify(BaseCommand):
         user: Optional[hikari.Snowflake] = None,
         vekn: Optional[str] = None,
         note: Optional[str] = None,
-    ):
+    ) -> None:
         self.tournament.drop(user or vekn, reason=tournament.DropReason.DISQUALIFIED)
         if note:
             self.tournament.note(
@@ -993,7 +1026,7 @@ class Appoint(BaseCommand):
         self,
         role: str,
         user: hikari.Snowflake = None,
-    ):
+    ) -> None:
         await self.deferred(flags=hikari.MessageFlag.EPHEMERAL)
         if role in ["JUDGE", "BOT"]:
             await self.bot.rest.add_role_to_member(
@@ -1010,7 +1043,7 @@ class Appoint(BaseCommand):
                 reason=self.reason,
             )
         await self.create_or_edit_response(
-            "Appointed",
+            f"Appointed <@{user}> as {role}",
             flags=hikari.MessageFlag.EPHEMERAL,
         )
 
@@ -1099,7 +1132,7 @@ class Round(BaseCommand):
         ),
     ]
 
-    async def __call__(self, *args, **kwargs):
+    async def __call__(self, *args, **kwargs) -> None:
         """Call subcommand (start, finish, reset, add, remove)"""
         logger.debug("%s | %s", args, kwargs)
         for option in self.interaction.options or []:
@@ -1107,7 +1140,7 @@ class Round(BaseCommand):
                 **{subopt.name: subopt.value for subopt in (option.options or [])}
             )
 
-    async def _progress(self, step, **kwargs):
+    async def _progress(self, step, **kwargs) -> None:
         """Progress bar for the start subcommand"""
         chunk = tournament.ITERATIONS // 20
         if step % chunk:
@@ -1120,7 +1153,7 @@ class Round(BaseCommand):
             )
         )
 
-    async def _display_seating(self, table_num):
+    async def _display_seating(self, table_num) -> None:
         """Display the seating in the table channel."""
         table = self.tournament.rounds[-1].seating[table_num - 1]
         channel_id = self.tournament.channels[
@@ -1142,7 +1175,7 @@ class Round(BaseCommand):
         embed.set_thumbnail(hikari.UnicodeEmoji("🪑"))
         await self.bot.rest.create_message(channel_id, embed=embed)
 
-    async def start(self):
+    async def start(self) -> None:
         """Start a round. Dynamically optimise seating to follow official VEKN rules.
 
         Assign roles and create text and voice channels for players.
@@ -1282,7 +1315,7 @@ class Round(BaseCommand):
             user_mentions=True,
         )
 
-    async def _delete_round_tables(self, finals: bool = False):
+    async def _delete_round_tables(self, finals: bool = False) -> None:
         """Delete table channels and roles used for the round."""
         # TODO: tables roles and channels retrieval should be coded in tournament
         if finals:
@@ -1320,7 +1353,7 @@ class Round(BaseCommand):
             return_exceptions=True,
         )
 
-    async def finish(self, keep_checkin: bool = False):
+    async def finish(self, keep_checkin: bool = False) -> None:
         """Finish round (checks scores consistency)"""
         await self.deferred()
         round = self.tournament.finish_round(keep_checkin)
@@ -1328,7 +1361,7 @@ class Round(BaseCommand):
         self.update()
         await self.create_or_edit_response("Round finished")
 
-    async def reset(self):
+    async def reset(self) -> None:
         """Rollback round"""
         await self.deferred()
         round = self.tournament.reset_round()
@@ -1341,7 +1374,7 @@ class Round(BaseCommand):
         table: int,
         user: Optional[hikari.Snowflake] = None,
         vekn: Optional[str] = None,
-    ):
+    ) -> None:
         """Add player to a 4-players table"""
         await self.deferred()
         self.tournament.round_add(user or vekn, table)
@@ -1351,7 +1384,7 @@ class Round(BaseCommand):
 
     async def remove(
         self, user: Optional[hikari.Snowflake] = None, vekn: Optional[str] = None
-    ):
+    ) -> None:
         """Remove player from a 5-players table"""
         await self.deferred()
         table = self.tournament.round_remove(user or vekn)
@@ -1368,7 +1401,7 @@ class Finals(BaseCommand):
     DESCRIPTION = "JUDGE: Start the finals"
     OPTIONS = []
 
-    async def __call__(self):
+    async def __call__(self) -> None:
         round = self.tournament.start_finals()
         table = round.seating[0]
         await self.create_or_edit_response(
@@ -1503,7 +1536,7 @@ class Report(BaseCommand):
         ),
     ]
 
-    async def __call__(self, vp: float):
+    async def __call__(self, vp: float) -> None:
         self.tournament.report(self.author.id, vp)
         self.update()
         await self.create_or_edit_response(
@@ -1555,11 +1588,16 @@ class FixReport(BaseCommand):
         round: Optional[int] = None,
         user: Optional[hikari.Snowflake] = None,
         vekn: Optional[str] = None,
-    ):
+    ) -> None:
         self.tournament.report(user or vekn, vp, round)
         self.update()
         await self.create_or_edit_response(
-            content="Result registered", flags=hikari.MessageFlag.EPHEMERAL
+            content=(
+                f"Result registered: {vp} VPs for {self._player_display(user or vekn)}"
+            ),
+            flags=hikari.UNDEFINED
+            if self._is_judge_channel()
+            else hikari.MessageFlag.EPHEMERAL,
         )
 
 
@@ -1594,12 +1632,16 @@ class ValidateScore(BaseCommand):
         ),
     ]
 
-    async def __call__(self, table: int, note: str, round: Optional[int] = None):
+    async def __call__(
+        self, table: int, note: str, round: Optional[int] = None
+    ) -> None:
         self.tournament.validate_score(table, self.author.id, note, round)
         self.update()
         await self.create_or_edit_response(
             content=f"Score validated for table {table}",
-            flags=hikari.MessageFlag.EPHEMERAL,
+            flags=hikari.UNDEFINED
+            if self._is_judge_channel()
+            else hikari.MessageFlag.EPHEMERAL,
         )
 
 
@@ -1692,7 +1734,7 @@ class Note(BaseCommand):
         note: str,
         user: Optional[hikari.Snowflake] = None,
         vekn: Optional[str] = None,
-    ):
+    ) -> None:
         await self.deferred(hikari.MessageFlag.EPHEMERAL)
         vekn = self.tournament._check_player_id(user or vekn)
         previous_level, previous_notes = None, None
@@ -1859,7 +1901,7 @@ class Announce(BaseCommand):
     DESCRIPTION = "Make the standard announcement (depends on the tournament state)"
     OPTIONS = []
 
-    async def __call__(self):
+    async def __call__(self) -> None:
         await self.deferred()
         judges_channel = self.tournament.channels[self.tournament.JUDGE_TEXT]
         current_round = self.tournament.current_round
@@ -1905,16 +1947,38 @@ class Announce(BaseCommand):
                 name="Check-in",
                 value=(
                     "Once registered, you will need to check in before "
-                    f"{checkin_time} using the `/check-in` command"
+                    f"{checkin_time} using the `/check-in` command."
                 ),
             )
             judges_embed = hikari.Embed(
                 title=embed.title,
                 description=(
                     "- `/players-list` to check progression\n"
-                    "- `/register-player` to register players who struggle\n"
-                    "- `/open-check-in` to allow check-in for the first round."
+                    "- `/register-player` to register players who struggles\n"
+                    "- `/drop-player` to remove a player\n"
+                    "- `/open-check-in` to allow check-in for the first round. "
                     "Registration will still be possible once you open check-in.\n"
+                ),
+            )
+            judges_embed.add_field(
+                name="Player Registration",
+                value=(
+                    "When you use the `/register-player` command, you need to provide "
+                    "either the user or their VEKN ID#. With a *single command*, "
+                    "you can provide both, and also the decklist. If the player is "
+                    "listed already, the command will update the information "
+                    "(VEKN ID# and/or deck). If not, the command will register them "
+                    "as a new player."
+                ),
+            )
+            judges_embed.add_field(
+                name="No VEKN ID#",
+                value=(
+                    "If the tournament requires a VEKN ID# and the player does not "
+                    "have one yet, they cannot register. As judge, you can register "
+                    "them with the `/register-player` command. If you do not provide "
+                    "a VEKN ID#, the bot will issue a temporary ID to use as VEKN ID#, "
+                    "a short number prefixed with `P-`."
                 ),
             )
             await asyncio.gather(
@@ -2008,11 +2072,7 @@ class Announce(BaseCommand):
                 description=description,
             )
             if winner.deck:
-                deck = krcg.deck.Deck()
-                deck.from_json(winner.deck)
-                embed.add_field(
-                    name="Decklist", value=f"[{deck.name}]({deck.to_vdb()})"
-                )
+                embed.add_field(name="Decklist", value=self._deck_display(winner.deck))
             judges_embed = hikari.Embed(
                 title=embed.title,
                 description=(
@@ -2042,21 +2102,35 @@ class Announce(BaseCommand):
                     "No need to report scores of zero."
                 ),
             )
-            judges_embed = hikari.Embed(
-                title=embed.title,
-                description=(
-                    "- `/round remove` to remove a player before the game begins\n"
-                    "- `/round reset` to cancel the round and seating\n"
-                    "- `/results` to see the results\n"
-                    "- `/fix-report` to correct them if needed\n"
-                    "- `/validate-score` to confirm odd situations\n"
-                    "- `/round finish` when all is good\n"
-                    "\n"
-                    "You can still register a late arrival with `/register-player` "
-                    "then add them to a 4-players table that has not yet started "
-                    "(if any) with `/round add`"
-                ),
-            )
+            if self.tournament.rounds[-1].finals:
+                judges_embed = hikari.Embed(
+                    title=embed.title,
+                    description=(
+                        "- `/round reset` to cancel (the toss stays the same)\n"
+                        "- `/fix-report` to register the score\n"
+                        "- `/round finish` when all is good\n"
+                        "\n"
+                        "Once this is done, you can get the reports with "
+                        "`/download-reports` and close the tournament with "
+                        "`/close-tournament`."
+                    ),
+                )
+            else:
+                judges_embed = hikari.Embed(
+                    title=embed.title,
+                    description=(
+                        "- `/round remove` to remove a player before the game begins\n"
+                        "- `/round reset` to cancel the round and seating\n"
+                        "- `/results` to see the results\n"
+                        "- `/fix-report` to correct them if needed\n"
+                        "- `/validate-score` to confirm odd situations\n"
+                        "- `/round finish` when all is good\n"
+                        "\n"
+                        "You can still register a late arrival with `/register-player` "
+                        "then add them to a 4-players table that has not yet started "
+                        "(if any) with `/round add`."
+                    ),
+                )
             await asyncio.gather(
                 *(
                     self.create_or_edit_response(embed=embed),
@@ -2072,7 +2146,7 @@ class Status(BaseCommand):
     DESCRIPTION = "Check your current status"
     OPTIONS = []
 
-    async def __call__(self):
+    async def __call__(self) -> None:
         await self.deferred(hikari.MessageFlag.EPHEMERAL)
         if not self.tournament:
             raise CommandFailed("No tournament in progress")
@@ -2123,8 +2197,8 @@ class Status(BaseCommand):
             if info.status == tournament.PlayerStatus.PLAYING:
                 if self.tournament.rounds[-1].finals:
                     seat = "seed"
-                    text_channel = f"text-{self.tournament.prefix}finals"
-                    voice_channel = f"voice-{self.tournament.prefix}finals"
+                    text_channel = f"text-{self.tournament.prefix}finals".lower()
+                    voice_channel = f"voice-{self.tournament.prefix}finals".lower()
                 else:
                     seat = "seat"
                     table_name = self.tournament.table_name(info.table)
@@ -2188,19 +2262,25 @@ class Status(BaseCommand):
                     self.tournament.state == tournament.TournamentState.PLAYING
                     and info.player.playing
                 ):
-                    ORDINAL = {
-                        1: "st",
-                        2: "nd",
-                        3: "rd",
-                    }
-                    embed.description = (
-                        f"**You are playing your {info.rounds}"
-                        f"{ORDINAL.get(info.rounds, 'th')} round {info.score}**\n"
-                        + embed.description
-                    )
+                    if self.tournament.rounds[-1].finals:
+                        embed.description = (
+                            f"**You are playing in the finals** {info.score}\n"
+                            + embed.description
+                        )
+                    else:
+                        ORDINAL = {
+                            1: "st",
+                            2: "nd",
+                            3: "rd",
+                        }
+                        embed.description = (
+                            f"**You are playing your {info.rounds}"
+                            f"{ORDINAL.get(info.rounds, 'th')} round {info.score}**\n"
+                            + embed.description
+                        )
                 else:
                     embed.description = (
-                        f"**You played {info.rounds} rounds {info.score}**\n"
+                        f"You played {info.rounds} rounds {info.score}\n"
                         + embed.description
                     )
         await self.create_or_edit_response(
@@ -2223,7 +2303,7 @@ class Standings(BaseCommand):
         ),
     ]
 
-    async def __call__(self, public: bool = False):
+    async def __call__(self, public: bool = False) -> None:
         winner, ranking = self.tournament.standings()
         embed = hikari.Embed(
             title="Standings",
@@ -2269,10 +2349,12 @@ class PlayerInfo(BaseCommand):
         self,
         vekn: Optional[str] = None,
         user: Optional[hikari.Snowflake] = None,
-    ):
+    ) -> None:
         info = self.tournament.player_info(vekn or user)
         description = self._player_display(info.player.vekn)
-        description += f"\n{info.rounds} rounds played {info.score}"
+        description += (
+            f"\n{info.rounds} round{'s' if info.rounds > 1 else ''} played {info.score}"
+        )
         if info.drop and info.drop == tournament.DropReason.DROP:
             description += "\n**DROPPED**"
         elif info.drop and info.drop == tournament.DropReason.DISQUALIFIED:
@@ -2281,6 +2363,55 @@ class PlayerInfo(BaseCommand):
             title="Player Info",
             description=description,
         )
+        if info.player.deck:
+            if self.tournament.rounds:
+                embed.add_field(
+                    name="Decklist", value=self._deck_display(info.player.deck)
+                )
+            else:
+                embed.add_field(
+                    name="Decklist registered",
+                    value=(
+                        "You will have access to the list "
+                        "after the first round begins."
+                    ),
+                )
+        if info.player.playing:
+            if self.tournament.state in [
+                tournament.TournamentState.CHECKIN,
+                tournament.TournamentState.WAITING,
+            ]:
+                embed.add_field(
+                    name="Checked-in",
+                    value=("Player is checked-in and ready to play."),
+                )
+            elif self.tournament.state == tournament.TournamentState.PLAYING:
+                # TODO factorize this part
+                if self.tournament.rounds[-1].finals:
+                    seat = "seed"
+                    text_channel = f"text-{self.tournament.prefix}finals".lower()
+                    voice_channel = f"voice-{self.tournament.prefix}finals".lower()
+                else:
+                    seat = "seat"
+                    table_name = self.tournament.table_name(info.table)
+                    text_channel = f"text-{table_name}".lower()
+                    voice_channel = f"voice-{table_name}".lower()
+                text_channel = self.tournament.channels.get(text_channel, None)
+                voice_channel = self.tournament.channels.get(voice_channel, None)
+                if text_channel:
+                    description = (
+                        f"Player is {seat} {info.position} on <#{text_channel}>\n"
+                    )
+                else:
+                    description = (
+                        f"Player is {seat} {info.position} on table {info.table}\n"
+                    )
+                if voice_channel:
+                    description += f"\n**Vocal:** <#{voice_channel}>"
+                embed.add_field(
+                    name="Playing",
+                    value=description,
+                )
         for notes in notes_by_level(info.notes):
             embed.add_field(
                 name=note_level_str(notes[0].level),
@@ -2322,7 +2453,7 @@ class Results(BaseCommand):
 
     async def __call__(
         self, round: Optional[int] = None, public: Optional[bool] = False
-    ):
+    ) -> None:
         round_number = round or self.tournament.current_round
         try:
             round = self.tournament.rounds[round_number - 1]
@@ -2380,7 +2511,7 @@ class PlayersList(BaseCommand):
         ),
     ]
 
-    async def __call__(self, public: bool = False):
+    async def __call__(self, public: bool = False) -> None:
         if public or self._is_judge_channel():
             flag = hikari.UNDEFINED
         else:
@@ -2405,7 +2536,7 @@ class DownloadReports(BaseCommand):
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Get CSV reports for the tournament"
 
-    async def __call__(self):
+    async def __call__(self) -> None:
         if self.tournament.state == tournament.TournamentState.PLAYING:
             raise CommandFailed("Finish the current round before exporting results")
         self.deferred(hikari.MessageFlag.EPHEMERAL)
@@ -2558,7 +2689,7 @@ class Raffle(BaseCommand):
         ),
     ]
 
-    async def __call__(self, count: Optional[int] = None):
+    async def __call__(self, count: Optional[int] = None) -> None:
         await self.deferred()
         count = count or 1
         if count < 1 or count > self.tournament.players.count:

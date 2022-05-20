@@ -1,7 +1,8 @@
 0.18 (unreleased)
 -----------------
 
-- Nothing changed yet.
+- Fix player number attribution
+- Improve help messages
 
 
 0.17 (2022-05-20)

@@ -1,4 +1,4 @@
-0.19 (unreleased)
+0.19 (2022-05-21)
 -----------------
 
 - Prevent a new round to start when previous one has not been closed yet.

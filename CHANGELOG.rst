@@ -2,7 +2,9 @@
 -----------------
 
 - Prevent a new round to start when previous one has not been closed yet.
-
+- Multiple fixes
+- Added the reset-channels command
+- Include a JSON of decklists in reports
 
 0.18 (2022-05-21)
 -----------------

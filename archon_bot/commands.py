@@ -5,6 +5,7 @@ import enum
 import functools
 import itertools
 import io
+import json
 import logging
 import random
 from typing import Iterable, List, Optional, Union
@@ -134,7 +135,9 @@ def _paginate_embed(embed: hikari.Embed) -> List[hikari.Embed]:
                 description=description,
             )
             for field in fields:
-                embed.add_field(name=field.name, value=field.value, inline=field.inline)
+                embed.add_field(
+                    name=field.name, value=field.value, inline=field.is_inline
+                )
             description = ""
             fields = []
         else:
@@ -237,7 +240,12 @@ class BaseInteraction:
         player = self.tournament.players[player_id]
         return (
             ("**[D]** " if player.vekn in self.tournament.dropped else "")
-            + (f"{player.name} #{player.vekn} " if player.name else f"#{player.vekn} ")
+            + (
+                f"{player.name[:29] + '...' if len(player.name) > 32 else player.name} "
+                f"#{player.vekn} "
+                if player.name
+                else f"#{player.vekn} "
+            )
             + (f"<@{player.discord}>" if player.discord else "")
         )
 
@@ -632,6 +640,11 @@ class CloseTournament(BaseCommand):
 
         async def __call__(self) -> None:
             await self.deferred()
+            if self.channel_id in self.tournament.channels.values():
+                raise CommandFailed(
+                    "This command can only be issued in the top level channel "
+                    "(where you opened the tournament)."
+                )
             results = await asyncio.gather(
                 *(
                     self.bot.rest.delete_channel(channel)
@@ -725,6 +738,7 @@ class Register(BaseCommand):
         if not self.tournament:
             raise CommandFailed("No tournament in progress")
         await self.deferred(flags=hikari.MessageFlag.EPHEMERAL)
+        name = name and name[:4096]
         deck = None
         if decklist:
             deck = krcg.deck.Deck.from_url(decklist)
@@ -819,6 +833,7 @@ class RegisterPlayer(BaseCommand):
         user: Optional[hikari.Snowflake] = None,
     ) -> None:
         await self.deferred()
+        name = name and name[:4096]
         deck = None
         if decklist:
             deck = krcg.deck.Deck.from_url(decklist)
@@ -1638,7 +1653,7 @@ class ValidateScore(BaseCommand):
         self.tournament.validate_score(table, self.author.id, note, round)
         self.update()
         await self.create_or_edit_response(
-            content=f"Score validated for table {table}",
+            content=f"Score validated for table {table}: {note}",
             flags=hikari.UNDEFINED
             if self._is_judge_channel()
             else hikari.MessageFlag.EPHEMERAL,
@@ -2539,8 +2554,10 @@ class DownloadReports(BaseCommand):
     async def __call__(self) -> None:
         if self.tournament.state == tournament.TournamentState.PLAYING:
             raise CommandFailed("Finish the current round before exporting results")
-        self.deferred(hikari.MessageFlag.EPHEMERAL)
+        await self.deferred(hikari.MessageFlag.EPHEMERAL)
         reports = [self._build_results_csv()]
+        if self.tournament.flags & tournament.TournamentFlag.DECKLIST_REQUIRED:
+            reports.append(self._build_decks_json())
         if self.tournament.flags & tournament.TournamentFlag.VEKN_REQUIRED:
             reports.append(self._build_methuselahs_csv())
             reports.extend(f for f in self._build_rounds_csvs())
@@ -2559,13 +2576,19 @@ class DownloadReports(BaseCommand):
         )
 
     def _build_csv(self, filename: str, it: Iterable[str], columns=None):
-        data = io.StringIO()
-        writer = csv.writer(data)
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
         if columns:
             writer.writerow(columns)
         writer.writerows(it)
-        data = io.BytesIO(data.getvalue().encode("utf-8"))
-        return hikari.Bytes(data, filename, mimetype="text/csv")
+        buffer = io.BytesIO(buffer.getvalue().encode("utf-8"))
+        return hikari.Bytes(buffer, filename, mimetype="text/csv")
+
+    def _build_json(self, filename: str, data: str):
+        buffer = io.StringIO()
+        json.dump(data, buffer)
+        buffer = io.BytesIO(buffer.getvalue().encode("utf-8"))
+        return hikari.Bytes(buffer, filename, mimetype="application/json")
 
     def _build_results_csv(self):
         winner, ranking = self.tournament.standings()
@@ -2600,6 +2623,27 @@ class DownloadReports(BaseCommand):
                 "Rank",
             ],
         )
+
+    def _build_decks_json(self):
+        """Anonymized list of decks.
+
+        Finding the player from his number is only possible with the official report.
+        """
+        data = []
+        for player in sorted(
+            self.tournament.players.iter_players(), key=lambda p: p.number
+        ):
+            info = self.tournament.player_info(player.vekn)
+            data.append(
+                {
+                    "number": player.number,
+                    "finals_seed": player.seed,
+                    "rounds": info.rounds,
+                    "score": info.score.to_json(),
+                    "deck": player.deck,
+                }
+            )
+        return self._build_json("Decks.json", data)
 
     def _player_first_last_name(self, player):
         name = player.name.split(" ", 1)
@@ -2710,6 +2754,163 @@ class Raffle(BaseCommand):
             description="\n".join(f"- {self._player_display(p)}" for p in players),
         )
         await asyncio.sleep(3)
+        await self.create_or_edit_response(embed=embed)
+
+
+class ResetChannels(BaseCommand):
+    """For dev purposes and in case of bug: realign the channels.
+
+    # TODO: this is clumsy - improve channel management overall
+    """
+
+    UPDATE = True
+    ACCESS = CommandAccess.JUDGE
+    DESCRIPTION = "JUDGE: Reset tournament channels"
+    OPTIONS = []
+
+    async def __call__(self) -> None:
+        """Realign channels on what we have registered."""
+        await self.deferred()
+        judge_role_id = self.tournament.roles[self.tournament.JUDGE]
+        spectator_role_id = self.tournament.roles[self.tournament.SPECTATOR]
+        channels = await self.bot.rest.fetch_guild_channels(self.guild_id)
+        channels = [
+            c
+            for c in channels
+            if c.type in {hikari.ChannelType.GUILD_TEXT, hikari.ChannelType.GUILD_VOICE}
+        ]
+        if self.category_id:
+            channels = [c for c in channels if c.parent_id == self.category_id]
+        channels = [c for c in channels if c.name.startswith(self.tournament.prefix)]
+        deleted = 0
+        for c in channels:
+            prefix = {
+                hikari.ChannelType.GUILD_TEXT: "text-",
+                hikari.ChannelType.GUILD_VOICE: "voice-",
+            }[c.type]
+            if prefix + c.name.lower() not in self.tournament.channels:
+                logger.info("deleting spurious channel %s", c)
+                await self.bot.rest.delete_channel(c.id)
+                deleted += 1
+        to_update = {}
+        for k, v in self.tournament.channels.items():
+            try:
+                await self.bot.rest.fetch_channel(v)
+            except hikari.NotFoundError:
+                logger.info("Channel %s missing", k)
+                if k == self.tournament.JUDGE_TEXT:
+                    to_update[k] = await self.bot.rest.create_guild_text_channel(
+                        self.guild_id,
+                        "Judges",
+                        category=self.category_id or hikari.UNDEFINED,
+                        reason=self.reason,
+                        permission_overwrites=[
+                            hikari.PermissionOverwrite(
+                                id=self.guild_id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                deny=perm.TEXT,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=judge_role_id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                allow=perm.TEXT,
+                            ),
+                        ],
+                    )
+                elif k == self.tournament.JUDGE_VOICE:
+                    to_update[k] = await self.bot.rest.create_guild_voice_channel(
+                        self.guild_id,
+                        "Judges",
+                        category=self.category_id or hikari.UNDEFINED,
+                        bitrate=96000,
+                        reason=self.reason,
+                        permission_overwrites=[
+                            hikari.PermissionOverwrite(
+                                id=self.guild_id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                deny=perm.VOICE,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=judge_role_id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                allow=perm.VOICE,
+                            ),
+                        ],
+                    )
+                elif k.startswith(f"text-{self.tournament.prefix}".lower()):
+                    group_name = self.tournament.prefix + stringcase.titlecase(
+                        k.replace(f"text-{self.tournament.prefix}".lower(), "")
+                    ).replace(" ", "-")
+                    table_role_id = self.tournament.roles[group_name]
+                    to_update[k] = await self.bot.rest.create_guild_text_channel(
+                        guild=self.guild_id,
+                        name=group_name.lower(),
+                        reason=self.reason,
+                        permission_overwrites=[
+                            hikari.PermissionOverwrite(
+                                id=self.guild_id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                deny=perm.TEXT,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=table_role_id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                allow=perm.TEXT,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=judge_role_id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                allow=perm.TEXT,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=spectator_role_id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                allow=perm.SPECTATE_TEXT,
+                            ),
+                        ],
+                    )
+                elif k.startswith(f"voice-{self.tournament.prefix}".lower()):
+                    group_name = self.tournament.prefix + stringcase.titlecase(
+                        k.replace(f"voice-{self.tournament.prefix}".lower(), "")
+                    ).replace(" ", "-")
+                    table_role_id = self.tournament.roles[group_name]
+                    to_update[k] = await self.bot.rest.create_guild_voice_channel(
+                        guild=self.guild_id,
+                        name=group_name,
+                        reason=self.reason,
+                        bitrate=96000,
+                        permission_overwrites=[
+                            hikari.PermissionOverwrite(
+                                id=self.guild_id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                deny=perm.VOICE,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=table_role_id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                allow=perm.VOICE,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=judge_role_id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                allow=perm.JUDGE_VOICE,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=spectator_role_id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                allow=perm.SPECTATE_VOICE,
+                            ),
+                        ],
+                    )
+                else:
+                    logger.warning("Unable to recreate channel %s", k)
+
+        self.tournament.channels.update({k: c.id for k, c in to_update.items()})
+        self.update()
+        embed = hikari.Embed(
+            title="Channels reset",
+            description=f"{len(to_update)} channels created, {deleted} deleted.",
+        )
         await self.create_or_edit_response(embed=embed)
 
 

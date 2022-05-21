@@ -51,7 +51,7 @@ async def on_ready(event: hikari.StartedEvent) -> None:
         if UPDATE or set(c.name for c in commands) ^ set(
             c.name for c in registered_commands
         ):
-            logger.debug("Updating commands: %s", commands)
+            logger.info("Updating commands: %s", commands)
             registered_commands = await bot.rest.set_application_commands(
                 application=application,
                 commands=commands,

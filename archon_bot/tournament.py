@@ -518,11 +518,11 @@ class Tournament:
         # REGISTRATION, WAITING and PLAYING stay as is
 
     async def start_round(self, progression_callback: Callable) -> Round:
-        if self.tournament.state == TournamentState.REGISTRATION:
+        if self.state == TournamentState.REGISTRATION:
             raise CommandFailed("Check players in before starting the round")
-        if self.tournament.state == TournamentState.PLAYING:
+        if self.state == TournamentState.PLAYING:
             raise CommandFailed("Finish the previous round before starting a new one")
-        if self.tournament.state == TournamentState.FINISHED:
+        if self.state == TournamentState.FINISHED:
             raise CommandFailed("Tournament is finished")
         self.current_round += 1
         self.state = TournamentState.PLAYING
@@ -602,7 +602,7 @@ class Tournament:
             score,
         )
         self.flags |= TournamentFlag.STAGGERED
-        self.tournament.state = TournamentState.WAITING
+        self.state = TournamentState.WAITING
 
     def unmake_staggered(self) -> None:
         if not (self.flags & TournamentFlag.STAGGERED):
@@ -700,7 +700,7 @@ class Tournament:
 
     def finish_round(self, keep_checkin=False) -> Round:
         """Mark the round as finished. Score gets frozen."""
-        if not self.rounds or self.tournament.state != TournamentState.PLAYING:
+        if not self.rounds or self.state != TournamentState.PLAYING:
             raise CommandFailed("No round in progress")
         self.rounds[-1].score()
         incorrect = self.rounds[-1].incorrect
@@ -820,7 +820,9 @@ class Tournament:
                     winner == a[0],
                     a[1],
                     # put the seed here, so if you win the toss once, you keep your win
-                    -self.players[a[0]].seed,
+                    # 0 would go before negative seed numbers, math.nan always goes last
+                    # BUG: this does not seem to work, check it
+                    -self.players[a[0]].seed or math.nan,
                     # toss
                     random.random() if toss else a[0],
                 ),
@@ -845,6 +847,9 @@ class Tournament:
     def start_finals(self) -> Round:
         _, ranking = self.standings(toss=True)  # toss for finals seats if necessary
         top_5 = [self.players[vekn].number for (_rank, vekn, _score) in ranking[:5]]
+        for p in self.players.iter_players():
+            p.seed = 0
+            p.playing = False
         for i, number in enumerate(top_5, 1):
             self.players[number].seed = i
             self.players[number].playing = True

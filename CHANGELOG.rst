@@ -1,7 +1,7 @@
 0.20 (unreleased)
 -----------------
 
-- Nothing changed yet.
+- Fix drop-player
 
 
 0.19 (2022-05-21)

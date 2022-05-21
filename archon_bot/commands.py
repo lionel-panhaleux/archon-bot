@@ -955,9 +955,7 @@ class DropPlayer(BaseCommand):
     ) -> None:
         self.tournament.drop(user or vekn)
         self.update()
-        await self.create_or_edit_response(
-            f"Dropped {self._player_display(user or vekn)}"
-        )
+        await self.create_or_edit_response("Dropped")  # cannot display them anymore
 
 
 class Disqualify(BaseCommand):

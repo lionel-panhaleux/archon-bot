@@ -13,7 +13,7 @@ DB_USER = os.getenv("DB_USER")
 DB_PWD = os.getenv("DB_PWD")
 psycopg2.extensions.register_adapter(dict, psycopg2.extras.Json)
 psycopg2.extensions.register_adapter(list, psycopg2.extras.Json)
-CONNECTION = asyncio.Queue(maxsize=10)
+CONNECTION = asyncio.Queue(maxsize=40)
 
 
 @contextlib.asynccontextmanager
@@ -27,7 +27,7 @@ async def connection():
     else:
         conn.commit()
     finally:
-        CONNECTION.put_nowait(conn)
+        await CONNECTION.put(conn)
 
 
 async def init():

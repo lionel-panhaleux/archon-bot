@@ -18,7 +18,7 @@ CONNECTION = asyncio.Queue(maxsize=10)
 
 @contextlib.asynccontextmanager
 async def connection():
-    conn = await CONNECTION.get_nowait()
+    conn = await CONNECTION.get()
     try:
         yield conn
     except:  # noqa: E722

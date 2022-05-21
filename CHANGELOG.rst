@@ -1,7 +1,7 @@
 0.22 (unreleased)
 -----------------
 
-- Nothing changed yet.
+- Fix DB
 
 
 0.21 (2022-05-21)

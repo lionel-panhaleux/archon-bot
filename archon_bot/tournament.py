@@ -394,7 +394,6 @@ class Tournament:
         if not judge and self.current_round and not self.flags & TournamentFlag.LEAGUE:
             if vekn in self.players and deck:
                 raise CommandFailed("Tournament in progress: too late to change deck.")
-            raise CommandFailed("Tournament in progress: too late to register.")
         if vekn in self.players:
             player = self.players[vekn]
             if name:

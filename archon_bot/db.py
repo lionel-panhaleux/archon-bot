@@ -13,12 +13,12 @@ DB_USER = os.getenv("DB_USER")
 DB_PWD = os.getenv("DB_PWD")
 psycopg2.extensions.register_adapter(dict, psycopg2.extras.Json)
 psycopg2.extensions.register_adapter(list, psycopg2.extras.Json)
-CONNECTION = asyncio.Queue(maxsize=5)
+CONNECTION = asyncio.Queue(maxsize=10)
 
 
 @contextlib.asynccontextmanager
 async def connection():
-    conn = await CONNECTION.get()
+    conn = await CONNECTION.get_nowait()
     try:
         yield conn
     except:  # noqa: E722

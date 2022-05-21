@@ -781,6 +781,7 @@ class Register(BaseCommand):
                 "\nPlease note you will need to confirm your presence by "
                 "using the `checkin` command before the next round begins."
             )
+        description += "\n\nUse the `/status` command anytime to check your status."
         self.update()
         await self.create_or_edit_response(
             embed=hikari.Embed(
@@ -2252,6 +2253,11 @@ class Status(BaseCommand):
                     embed.description = (
                         "You are registered. Waiting for check-in to open."
                     )
+                    if info.player.deck:
+                        embed.description += (
+                            "\nYour decklist has been saved. You can use the "
+                            "`/register` command again to update it."
+                        )
                 elif self.tournament.rounds[-1].finals:
                     embed.description = (
                         "You are done. Thanks for participating in this event!"

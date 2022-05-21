@@ -2711,3 +2711,7 @@ class Raffle(BaseCommand):
         )
         await asyncio.sleep(3)
         await self.create_or_edit_response(embed=embed)
+
+
+# TODO upload decklist as txt file attachment
+# TODO download all decklists for statistics

@@ -1,7 +1,7 @@
 0.19 (unreleased)
 -----------------
 
-- Nothing changed yet.
+- Prevent a new round to start when previous one has not been closed yet.
 
 
 0.18 (2022-05-21)

@@ -17,10 +17,11 @@ if you want the bot to run properly on your server.
 
 Players:
 
--   Check in: `archon checkin`
--   Check in with VEKN ID: `archon checkin 1000123`
--   Report your result: `archon report 2`
--   Drop out: `archon drop`
+-   Register: `/register`
+-   Check in: `/check-in`
+-   Report your result: `/report`
+-   Drop out: `/drop`
+-   Check your status: `/status`
 
 Judges:
 

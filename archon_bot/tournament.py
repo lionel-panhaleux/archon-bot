@@ -267,6 +267,7 @@ class Tournament:
         self.channels: Dict[str, hikari.Snowflake] = kwargs.get("channels", {})
         self.max_rounds: int = kwargs.get("max_rounds", 0)
         self.current_round: int = kwargs.get("current_round", 0)
+        # TODO use _state and replace access with a property
         self.state: TournamentState = TournamentState(
             kwargs.get("state", TournamentState.REGISTRATION)
         )
@@ -517,6 +518,12 @@ class Tournament:
         # REGISTRATION, WAITING and PLAYING stay as is
 
     async def start_round(self, progression_callback: Callable) -> Round:
+        if self.tournament.state == TournamentState.REGISTRATION:
+            raise CommandFailed("Check players in before starting the round")
+        if self.tournament.state == TournamentState.PLAYING:
+            raise CommandFailed("Finish the previous round before starting a new one")
+        if self.tournament.state == TournamentState.FINISHED:
+            raise CommandFailed("Tournament is finished")
         self.current_round += 1
         self.state = TournamentState.PLAYING
         if self.flags & TournamentFlag.STAGGERED:
@@ -693,8 +700,8 @@ class Tournament:
 
     def finish_round(self, keep_checkin=False) -> Round:
         """Mark the round as finished. Score gets frozen."""
-        if not self.rounds:
-            return
+        if not self.rounds or self.tournament.state != TournamentState.PLAYING:
+            raise CommandFailed("No round in progress")
         self.rounds[-1].score()
         incorrect = self.rounds[-1].incorrect
         if len(incorrect) > 1:

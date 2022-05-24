@@ -160,8 +160,8 @@ class InteractionContext:
 class BaseInteraction:
     """Base class for all interactions (commands and components)"""
 
-    #: The interaction does not update tournament data. Override in children as needed.
-    UPDATE = False
+    #: The interaction update mode (conditions DB lock)
+    UPDATE = db.UpdateLevel.READ_ONLY
     #: The interaction requires an open tournament (most of them except open)
     REQUIRES_TOURNAMENT = True
     ACCESS = CommandAccess.PUBLIC
@@ -213,7 +213,7 @@ class BaseInteraction:
 
     def update(self) -> None:
         """Update tournament data."""
-        if not self.UPDATE:
+        if self.UPDATE < db.UpdateLevel.WRITE:
             raise RuntimeError("Command is not marked as UPDATE")
         data = self.tournament.to_json()
         db.update_tournament(
@@ -337,7 +337,7 @@ class BaseComponent(BaseInteraction):
 class OpenTournament(BaseCommand):
     """Open the tournament"""
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.EXCLUSIVE_WRITE
     ACCESS = CommandAccess.ADMIN  # For now, the admin access is public
     REQUIRES_TOURNAMENT = False
     DESCRIPTION = "ADMIN: Open a new event or tournament"
@@ -464,7 +464,7 @@ class ConfigureTournament(BaseCommand):
     STAGGERED: 6, 7, 11 players round-robin
     """
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Configure the tournament"
     OPTIONS = []
@@ -599,7 +599,7 @@ class ConfigureTournament(BaseCommand):
 class CloseTournament(BaseCommand):
     """Delete all roles and channels, mark as closed in DB (confirmation required)"""
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.READ_ONLY
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Close the tournament"
     OPTIONS = []
@@ -636,7 +636,7 @@ class CloseTournament(BaseCommand):
     class Confirmed(BaseComponent):
         """When the confirm button is hit"""
 
-        UPDATE = True
+        UPDATE = db.UpdateLevel.EXCLUSIVE_WRITE
 
         async def __call__(self) -> None:
             await self.deferred()
@@ -688,7 +688,7 @@ class CloseTournament(BaseCommand):
     class Cancel(BaseComponent):
         """When the cancel button is hit"""
 
-        UPDATE = False
+        UPDATE = db.UpdateLevel.READ_ONLY
 
         async def __call__(self):
             COMPONENTS.pop("cancel-close", None)
@@ -706,7 +706,7 @@ class Register(BaseCommand):
     The same class and code is used for CheckIn.
     """
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.WRITE
     DESCRIPTION = "Register for this tournament"
     OPTIONS = [
         hikari.CommandOption(
@@ -796,7 +796,7 @@ class Register(BaseCommand):
 class RegisterPlayer(BaseCommand):
     """Register another player (for judges). Also useful for offline tournaments."""
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Register a player for this tournament"
     OPTIONS = [
@@ -893,7 +893,7 @@ class RegisterPlayer(BaseCommand):
 class CheckIn(Register):
     """Just an alias."""
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.PLAYER
     DESCRIPTION = "Check-in to play the next round"
     OPTIONS = []
@@ -902,7 +902,7 @@ class CheckIn(Register):
 class OpenCheckIn(BaseCommand):
     """Open the check-in so players can join the incoming round."""
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Open check-in to players for next round"
     OPTIONS = []
@@ -916,7 +916,7 @@ class OpenCheckIn(BaseCommand):
 class Drop(BaseCommand):
     """Drop from the tournament."""
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.PLAYER
     DESCRIPTION = "Drop from the tournament"
     OPTIONS = []
@@ -933,7 +933,7 @@ class Drop(BaseCommand):
 class DropPlayer(BaseCommand):
     """Drop a player. Remove him from the list if the tournament has not started."""
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Remove a player from tournament (not a disqualification)"
     OPTIONS = [
@@ -962,7 +962,7 @@ class DropPlayer(BaseCommand):
 class Disqualify(BaseCommand):
     """Disqualify a player. Only a Judge can re-register them."""
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Disqualify a player from the tournament"
     OPTIONS = [
@@ -1013,7 +1013,7 @@ class Appoint(BaseCommand):
     Judges might not have role management permissions on a server.
     """
 
-    UPDATE = False
+    UPDATE = db.UpdateLevel.READ_ONLY
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Appoint judges, bots and spectators"
     OPTIONS = [
@@ -1072,7 +1072,7 @@ class Round(BaseCommand):
     remove: remove a player from a table where the game has not started yet
     """
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.EXCLUSIVE_WRITE
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Handle rounds"
     OPTIONS = [
@@ -1410,7 +1410,7 @@ class Round(BaseCommand):
 class Finals(BaseCommand):
     """Start finals (auto toss for a spot in case of points draw)."""
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.EXCLUSIVE_WRITE
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Start the finals"
     OPTIONS = []
@@ -1536,7 +1536,7 @@ class Finals(BaseCommand):
 class Report(BaseCommand):
     """Report number of VPs scored"""
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.PLAYER
     DESCRIPTION = "Report the number of VPs you got in the round"
     OPTIONS = [
@@ -1561,7 +1561,7 @@ class Report(BaseCommand):
 class FixReport(BaseCommand):
     """Fix a VP score on any table, any round."""
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Fix a VP score"
     OPTIONS = [
@@ -1618,7 +1618,7 @@ class FixReport(BaseCommand):
 class ValidateScore(BaseCommand):
     """Validate an odd VP situation (inconsistent score due to a judge ruling)"""
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "Validate an odd VP situation"
     OPTIONS = [
@@ -1703,7 +1703,7 @@ class Note(BaseCommand):
     (upgrade to caution, warning or disqualification).
     """
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.READ_ONLY
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Take a note on a player, or deliver a caution or warning"
     OPTIONS = [
@@ -1837,7 +1837,7 @@ class Note(BaseCommand):
     class ApplyNote(BaseComponent):
         """Apply the note. Post a message on table channel for cautions and warnings."""
 
-        UPDATE = True
+        UPDATE = db.UpdateLevel.WRITE
 
         def __init__(
             self,
@@ -1893,7 +1893,7 @@ class Note(BaseCommand):
                 await asyncio.gather(*coroutines)
 
     class Cancel(BaseComponent):
-        UPDATE = False
+        UPDATE = db.UpdateLevel.READ_ONLY
 
         async def __call__(self):
             await self.create_or_edit_response(
@@ -1910,7 +1910,7 @@ class Announce(BaseCommand):
     It's the core helper. It provides instructions and guidance for judges and players.
     """
 
-    UPDATE = False
+    UPDATE = db.UpdateLevel.READ_ONLY
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "Make the standard announcement (depends on the tournament state)"
     OPTIONS = []
@@ -2156,7 +2156,7 @@ class Announce(BaseCommand):
 class Status(BaseCommand):
     """Player status. Provides guidance for lost souls."""
 
-    UPDATE = False
+    UPDATE = db.UpdateLevel.READ_ONLY
     DESCRIPTION = "Check your current status"
     OPTIONS = []
 
@@ -2310,7 +2310,7 @@ class Status(BaseCommand):
 class Standings(BaseCommand):
     """Standings of all players. Private (ephemeral) answer by default."""
 
-    UPDATE = False
+    UPDATE = db.UpdateLevel.READ_ONLY
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Display current standings"
     OPTIONS = [
@@ -2346,7 +2346,7 @@ class Standings(BaseCommand):
 class PlayerInfo(BaseCommand):
     """Player information. Includes notes."""
 
-    UPDATE = False
+    UPDATE = db.UpdateLevel.READ_ONLY
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "Displayer a player's info (private)"
     OPTIONS = [
@@ -2449,7 +2449,7 @@ class PlayerInfo(BaseCommand):
 class Results(BaseCommand):
     """Round results. Defaults to current round."""
 
-    UPDATE = False
+    UPDATE = db.UpdateLevel.READ_ONLY
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Display current round results"
     OPTIONS = [
@@ -2518,7 +2518,7 @@ def status_icon(status: tournament.PlayerStatus) -> str:
 class PlayersList(BaseCommand):
     """Players list with status icon - useful to sheperd the flock."""
 
-    UPDATE = False
+    UPDATE = db.UpdateLevel.READ_ONLY
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Display the list of players"
     OPTIONS = [
@@ -2551,7 +2551,7 @@ class PlayersList(BaseCommand):
 class DownloadReports(BaseCommand):
     """Download reports. Archon-compatible reports if VEKN ID# were required."""
 
-    UPDATE = False
+    UPDATE = db.UpdateLevel.READ_ONLY
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Get CSV reports for the tournament"
 
@@ -2640,7 +2640,7 @@ class DownloadReports(BaseCommand):
             info = self.tournament.player_info(player.vekn)
             data.append(
                 {
-                    "number": player.number,
+                    "vken": player.vekn,
                     "finals_seed": player.seed,
                     "rounds": info.rounds,
                     "score": info.score.to_json(),
@@ -2725,7 +2725,7 @@ class DownloadReports(BaseCommand):
 class Raffle(BaseCommand):
     """Could come in handy: select a count of players randomly."""
 
-    UPDATE = False
+    UPDATE = db.UpdateLevel.READ_ONLY
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Select random players"
     OPTIONS = [
@@ -2767,7 +2767,7 @@ class ResetChannels(BaseCommand):
     # TODO: this is clumsy - improve channel management overall
     """
 
-    UPDATE = True
+    UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Reset tournament channels"
     OPTIONS = []
@@ -2919,4 +2919,6 @@ class ResetChannels(BaseCommand):
 
 
 # TODO upload decklist as txt file attachment
-# TODO download all decklists for statistics
+# TODO Display table score on table channel
+# TODO Include GW from current round in status when game is finished and fully reported
+#

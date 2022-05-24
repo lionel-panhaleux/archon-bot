@@ -1,7 +1,7 @@
 0.24 (unreleased)
 -----------------
 
-- Nothing changed yet.
+- Improve DB access and concurrency management
 
 
 0.23 (2022-05-21)

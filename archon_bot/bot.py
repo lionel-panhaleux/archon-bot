@@ -1,4 +1,5 @@
 """Discord Bot."""
+import asyncio
 import logging
 import os
 
@@ -29,6 +30,7 @@ logging.basicConfig(
 bot = hikari.GatewayBot(os.getenv("DISCORD_TOKEN") or "")
 UPDATE = os.getenv("UPDATE")
 RESET = os.getenv("RESET")
+SEATING = []  # do only one seating at a time
 
 # ####################################################################### Init KRCG
 krcg.vtes.VTES.load()
@@ -126,7 +128,7 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
             command = COMMANDS[event.interaction.command_id]
             channel = event.interaction.get_channel()
             if not channel:
-                channel = event.interaction.fetch_channel()
+                channel = await event.interaction.fetch_channel()
             async with db.tournament(
                 event.interaction.guild_id,
                 channel.parent_id,
@@ -153,9 +155,16 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
             logger.info("Command failed: %s - %s", event.interaction, exc.args)
             if exc.args:
                 await _interaction_response(instance, event.interaction, exc.args[0])
+        except asyncio.TimeoutError:
+            logger.info("Command failed: Timeout")
+            await _interaction_response(
+                instance,
+                event.interaction,
+                "Error: too many commands, wait a bit and try again.",
+            )
         except Exception:
             logger.exception("Command failed: %s", event.interaction)
-            await _interaction_response(instance, event.interaction, "Command error.")
+            await _interaction_response(instance, event.interaction, "Command error")
 
     elif event.interaction.type == hikari.InteractionType.MESSAGE_COMPONENT:
         try:
@@ -163,7 +172,7 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
             component_function = COMPONENTS[event.interaction.custom_id]
             channel = event.interaction.get_channel()
             if not channel:
-                channel = event.interaction.fetch_channel()
+                channel = await event.interaction.fetch_channel()
             async with db.tournament(
                 event.interaction.guild_id,
                 channel.parent_id,

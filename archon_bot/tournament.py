@@ -16,7 +16,7 @@ import krcg.seating
 import krcg.utils
 
 logger = logging.getLogger()
-ITERATIONS = 50000
+ITERATIONS = 30000
 VEKN_LOGIN = os.getenv("VEKN_LOGIN")
 VEKN_PASSWORD = os.getenv("VEKN_PASSWORD")
 
@@ -401,7 +401,7 @@ class Tournament:
             if discord:
                 player.discord = discord
             if deck:
-                player.deck = deck.to_json()
+                player.deck = deck.to_minimal_json()
             player.playing = self.state == TournamentState.CHECKIN
         else:
             if vekn and not temp_vekn:

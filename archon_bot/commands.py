@@ -8,7 +8,7 @@ import io
 import json
 import logging
 import random
-from typing import Iterable, List, Optional, Union
+from typing import Dict, Iterable, List, Optional, Union
 
 import hikari
 from hikari.interactions.base_interactions import ResponseType
@@ -74,6 +74,8 @@ def build_command_tree(rest_api):
 class MetaCommand(type):
     """Metaclass to register commands."""
 
+    COMMANDS_TO_REGISTER = {}
+
     def __new__(cls, name, bases, dict_):
         command_name = stringcase.spinalcase(name)
         if command_name in COMMANDS_TO_REGISTER:
@@ -96,6 +98,14 @@ class CommandAccess(str, enum.Enum):
     ADMIN = "ADMIN"
     PLAYER = "PLAYER"
     JUDGE = "JUDGE"
+
+
+class Role(str, enum.Enum):
+    """Different roles in a tournament"""
+
+    PLAYER = "Player"
+    SPECTATOR = "Spectator"
+    JUDGE = "Judge"
 
 
 def _split_text(s, limit):
@@ -157,6 +167,110 @@ class InteractionContext:
         self.has_response = False
 
 
+class DiscordExtra:
+    def __init__(self, app, *args, **kwargs):
+        self.prefix: str = kwargs.get("prefix", "")
+        self.roles: Dict[str, hikari.PartialRole] = {
+            k: hikari.PartialRole(app=app, **c)
+            for k, c in kwargs.get("roles", {}).items()
+        }
+        self.channels: Dict[hikari.PartialChannel] = {
+            t: {k: hikari.PartialChannel(app=app, **c) for k, c in chans.items()}
+            for t, chans in kwargs.get("channels", {}).items()
+        }
+
+    def to_json(self) -> dict:
+        return {
+            "prefix": self.prefix,
+            "roles": {s: {"id": r.id, "name": r.name} for s, r in self.roles.items()},
+            "channels": {
+                t: {
+                    key: {"id": c.id, "name": c.name, "type": c.type}
+                    for key, c in channels.items()
+                }
+                for t, channels in self.channels.items()
+            },
+        }
+
+    def role_name(self, role: Role, table_num: Optional[int] = None) -> str:
+        if role == Role.JUDGE:
+            return f"{self.prefix}-Judge"
+        elif role == Role.PLAYER:
+            if table_num:
+                return f"{self.prefix}-Table-{table_num}"
+            else:
+                return f"{self.prefix}-Player"
+        elif role == Role.SPECTATOR:
+            return f"{self.prefix}-Spectator"
+
+    def table_name(self, table_num=int) -> str:
+        return f"{self.prefix}-Table-{table_num}"
+
+    def table_roles(self) -> List[hikari.PartialRole]:
+        ret = sorted(
+            [(k, v) for k, v in self.roles.items() if isinstance(k, int)],
+            key=lambda a: a[0],
+        )
+        return [r[1] for r in ret]
+
+    def channel_name(
+        self, role: Role, type: hikari.ChannelType, table_num: Optional[int] = None
+    ):
+        name = self.prefix + "-"
+        if role == Role.JUDGE:
+            name += "Judge"
+        elif role == Role.PLAYER:
+            if not table_num:
+                raise ValueError("Player channel requires a table number")
+            name += f"Table-{table_num}"
+        else:
+            raise ValueError(f"No channel for {role}")
+        if type == hikari.ChannelType.GUILD_TEXT:
+            name = name.lower()
+        elif type == hikari.ChannelType.GUILD_VOICE:
+            pass
+        else:
+            raise ValueError(f"No channel type {type}")
+        return name
+
+    def get_judge_text_channel(self):
+        return self.channels["TEXT"][Role.JUDGE]
+
+    def set_judge_text_channel(self, channel: hikari.PartialChannel):
+        self.channels.setdefault("TEXT", {})
+        self.channels["TEXT"][Role.JUDGE] = channel
+
+    def get_judge_voice_channel(self):
+        return self.channels["VOICE"][Role.JUDGE]
+
+    def set_judge_voice_channel(self, channel: hikari.PartialChannel):
+        self.channels.setdefault("VOICE", {})
+        self.channels["VOICE"][Role.JUDGE] = channel
+
+    def get_table_text_channel(self, table_num: int):
+        return self.channels["TEXT"][table_num]
+
+    def set_table_text_channel(self, table_num: int, channel: hikari.PartialChannel):
+        self.channels.setdefault("TEXT", {})
+        self.channels["TEXT"][table_num] = channel
+
+    def get_table_voice_channel(self, table_num: int):
+        return self.channels["VOICE"][table_num]
+
+    def set_table_voice_channel(self, table_num: int, channel: hikari.PartialChannel):
+        self.channels.setdefault("VOICE", {})
+        self.channels["VOICE"][table_num] = channel
+
+    def all_channels_ids(self):
+        return {
+            c.id
+            for c in itertools.chain(
+                self.channels.get("TEXT", {}).values(),
+                self.channels.get("VOICE", {}).values(),
+            )
+        }
+
+
 class BaseInteraction:
     """Base class for all interactions (commands and components)"""
 
@@ -184,6 +298,10 @@ class BaseInteraction:
         self.guild_id: hikari.Snowflake = self.interaction.guild_id
         self.category_id: hikari.Snowflake = category_id
         self.tournament: tournament.Tournament = tournament_
+        discord_data = {}
+        if self.tournament:
+            discord_data = self.tournament.extra.get("discord", {})
+        self.discord = DiscordExtra(self.interaction.app, **discord_data)
         self.interaction_context = interaction_context or InteractionContext()
         if self.REQUIRES_TOURNAMENT and not self.tournament:
             raise CommandFailed(
@@ -215,6 +333,7 @@ class BaseInteraction:
         """Update tournament data."""
         if self.UPDATE < db.UpdateLevel.WRITE:
             raise RuntimeError("Command is not marked as UPDATE")
+        self.tournament.extra["discord"] = self.discord.to_json()
         data = self.tournament.to_json()
         db.update_tournament(
             self.connection,
@@ -225,14 +344,14 @@ class BaseInteraction:
 
     def _is_judge(self) -> bool:
         """Check whether the author is a judge."""
-        judge_role_id = self.tournament.roles[self.tournament.JUDGE]
-        return judge_role_id in self.author.role_ids
+        judge_role = self.discord.roles[Role.JUDGE]
+        return judge_role.id in self.author.role_ids
 
     def _is_judge_channel(self) -> bool:
         """Check wether the command was issued in the Judges private channel."""
         return (
             self.channel_id
-            == self.tournament.channels[tournament.Tournament.JUDGE_TEXT]
+            == self.tournament.channels[tournament.Tournament.JUDGE_TEXT].id
         )
 
     def _player_display(self, player_id: tournament.PlayerID) -> str:
@@ -253,6 +372,237 @@ class BaseInteraction:
         deck = krcg.deck.Deck()
         deck.from_json(data)
         return f"[{deck.name}]({deck.to_vdb()})"
+
+    async def _align_roles(
+        self, raise_on_exists: bool = False, silence_exceptions: bool = False
+    ) -> None:
+        # list what is expected
+        expected = [(r, self.discord.role_name(r)) for r in Role]
+        for table_num in range(1, self.tournament.tables_count() + 1):
+            expected.append((table_num, self.discord.role_name(Role.PLAYER, table_num)))
+        # delete spurious keys from registry
+        to_delete = []
+        expected_keys = {e[0] for e in expected}
+        for key, role in self.discord.roles.items():
+            if key not in expected_keys:
+                to_delete.append(key)
+        for key in to_delete:
+            del self.discord.roles[key]
+        # compare what exists with what is registered
+        existing = await self.bot.rest.fetch_roles(self.guild_id)
+        existing = [r for r in existing if r.name.startswith(self.discord.prefix + "-")]
+        if existing and raise_on_exists:
+            raise CommandFailed(
+                f"Roles with the {self.discord.prefix}- prefix exist: "
+                "remove them or use another tournament name."
+            )
+        registered = {r for r in self.discord.roles.values()}
+        to_delete = [r for r in existing if r not in registered]
+        existing = {r for r in existing if r in registered}
+        # delete spurious from discord
+        await asyncio.gather(
+            *(self.bot.rest.delete_role(self.guild_id, r) for r in to_delete),
+            return_exceptions=silence_exceptions,
+        )
+        # delete spurious from registry
+        to_delete = []
+        for key, role in self.discord.roles.items():
+            if role not in existing:
+                to_delete.append(key)
+        for key in to_delete:
+            del self.discord.roles[key]
+        # create what is missing both on discord and in registry
+        keys_to_create = []
+        roles_to_create = []
+        for key, name in expected:
+            if key not in self.discord.roles:
+                keys_to_create.append(key)
+                roles_to_create.append(
+                    self.bot.rest.create_role(
+                        self.guild_id,
+                        name=self.discord.role_name(key),
+                        mentionable=True,
+                        reason=self.reason,
+                    )
+                )
+        roles = await asyncio.gather(*roles_to_create)
+        for key, role in zip(keys_to_create, roles):
+            self.discord.roles[key] = role
+
+    async def _align_channels(
+        self, raise_on_exists: bool = False, silence_exceptions: bool = False
+    ) -> None:
+        # list what is expected
+        expected = [
+            (
+                ("TEXT", Role.JUDGE),
+                self.discord.channel_name(Role.JUDGE, hikari.ChannelType.GUILD_TEXT),
+                [
+                    hikari.PermissionOverwrite(
+                        id=self.guild_id,
+                        type=hikari.PermissionOverwriteType.ROLE,
+                        deny=perm.TEXT,
+                    ),
+                    hikari.PermissionOverwrite(
+                        id=self.discord.roles[Role.JUDGE].id,
+                        type=hikari.PermissionOverwriteType.ROLE,
+                        allow=perm.TEXT,
+                    ),
+                ],
+            ),
+            (
+                ("VOICE", Role.JUDGE),
+                self.discord.channel_name(Role.JUDGE, hikari.ChannelType.GUILD_VOICE),
+                [
+                    hikari.PermissionOverwrite(
+                        id=self.guild_id,
+                        type=hikari.PermissionOverwriteType.ROLE,
+                        deny=perm.VOICE,
+                    ),
+                    hikari.PermissionOverwrite(
+                        id=self.discord.roles[Role.JUDGE].id,
+                        type=hikari.PermissionOverwriteType.ROLE,
+                        allow=perm.VOICE,
+                    ),
+                ],
+            ),
+        ]
+        for table_num in range(1, self.tournament.tables_count() + 1):
+            expected.append(
+                (
+                    ("TEXT", table_num),
+                    self.discord.channel_name(
+                        Role.PLAYER, hikari.ChannelType.GUILD_TEXT, table_num
+                    ),
+                    [
+                        hikari.PermissionOverwrite(
+                            id=self.guild_id,
+                            type=hikari.PermissionOverwriteType.ROLE,
+                            deny=perm.TEXT,
+                        ),
+                        hikari.PermissionOverwrite(
+                            id=self.discord.roles[table_num].id,
+                            type=hikari.PermissionOverwriteType.ROLE,
+                            allow=perm.TEXT,
+                        ),
+                        hikari.PermissionOverwrite(
+                            id=self.discord.roles[Role.JUDGE].id,
+                            type=hikari.PermissionOverwriteType.ROLE,
+                            allow=perm.TEXT,
+                        ),
+                        hikari.PermissionOverwrite(
+                            id=self.discord.roles[Role.SPECTATOR].id,
+                            type=hikari.PermissionOverwriteType.ROLE,
+                            allow=perm.SPECTATE_TEXT,
+                        ),
+                    ],
+                )
+            )
+            expected.append(
+                (
+                    ("VOICE", table_num),
+                    self.discord.channel_name(
+                        Role.PLAYER, hikari.ChannelType.GUILD_VOICE, table_num
+                    ),
+                    [
+                        hikari.PermissionOverwrite(
+                            id=self.guild_id,
+                            type=hikari.PermissionOverwriteType.ROLE,
+                            deny=perm.VOICE,
+                        ),
+                        hikari.PermissionOverwrite(
+                            id=self.discord.roles[table_num].id,
+                            type=hikari.PermissionOverwriteType.ROLE,
+                            allow=perm.VOICE,
+                        ),
+                        hikari.PermissionOverwrite(
+                            id=self.discord.roles[Role.JUDGE].id,
+                            type=hikari.PermissionOverwriteType.ROLE,
+                            allow=perm.JUDGE_VOICE,
+                        ),
+                        hikari.PermissionOverwrite(
+                            id=self.discord.roles[Role.SPECTATOR].id,
+                            type=hikari.PermissionOverwriteType.ROLE,
+                            allow=perm.SPECTATE_VOICE,
+                        ),
+                    ],
+                )
+            )
+        # delete spurious keys from registry
+        to_delete = []
+        expected_keys = {e[0] for e in expected}
+        for key0, channels in self.discord.channels.items():
+            for key1, channel in channels.items():
+                if (key0, key1) not in expected_keys:
+                    to_delete.append((key0, key1))
+        for key0, key1 in to_delete:
+            del self.discord.channels[key0][key1]
+        # compare what exists with what is registered
+        registered = self.discord.all_channels_ids()
+        existing = await self.bot.rest.fetch_guild_channels(self.guild_id)
+        existing = [
+            c
+            for c in existing
+            if c.type in {hikari.ChannelType.GUILD_TEXT, hikari.ChannelType.GUILD_VOICE}
+        ]
+        if self.category_id:
+            existing = [c for c in existing if c.parent_id == self.category_id]
+        existing = [c for c in existing if c.name.startswith(self.discord.prefix + "-")]
+        if existing and raise_on_exists:
+            raise CommandFailed(
+                f"Channels with the {self.discord.prefix}- prefix exist: "
+                "remove them or use another tournament name."
+            )
+        to_delete = [c for c in existing if c.id not in registered]
+        existing = {c for c in existing if c.id in registered}
+        # delete spurious from discord
+        await asyncio.gather(
+            *(self.bot.rest.delete_channel(c.id) for c in to_delete),
+            return_exceptions=silence_exceptions,
+        )
+        # delete spurious from registry
+        to_delete = []
+        for key0, channels in self.discord.channels.items():
+            for key1, channel in channels.items():
+                if channel not in existing:
+                    to_delete.append((key0, key1))
+        for key0, key1 in to_delete:
+            del self.discord.channels[key0][key1]
+
+        # create what is missing both on discord and in registry
+        keys_to_create = []
+        to_create = []
+        self.discord.channels.setdefault("TEXT", {})
+        self.discord.channels.setdefault("VOICE", {})
+        for key, name, permissions in expected:
+            if key[1] in self.discord.channels[key[0]]:
+                continue
+            keys_to_create.append(key)
+            if key[0] == "TEXT":
+                to_create.append(
+                    self.bot.rest.create_guild_text_channel(
+                        self.guild_id,
+                        name,
+                        category=self.category_id or hikari.UNDEFINED,
+                        reason=self.reason,
+                        permission_overwrites=permissions,
+                    )
+                )
+            elif key[0] == "VOICE":
+                to_create.append(
+                    self.bot.rest.create_guild_voice_channel(
+                        self.guild_id,
+                        name,
+                        category=self.category_id or hikari.UNDEFINED,
+                        reason=self.reason,
+                        permission_overwrites=permissions,
+                    )
+                )
+            else:
+                raise RuntimeError("Unexpected channel type")
+        result = await asyncio.gather(*to_create)
+        for key, res in zip(keys_to_create, result):
+            self.discord.channels[key[0]][key[1]] = res
 
     @property
     def reason(self) -> str:
@@ -365,91 +715,34 @@ class OpenTournament(BaseCommand):
             raise CommandFailed("A tournament is already open here")
         await self.deferred()
         self.tournament = tournament.Tournament(name=name)
+        self.discord.prefix = "".join([w[0] for w in name.split()][:3])
+
         if rounds:
             self.tournament.max_rounds = rounds
         logger.debug("Creating roles...")
-        judge_role, spectator_role, player_role = await asyncio.gather(
-            self.bot.rest.create_role(
+        await self._align_roles(raise_on_exists=True)
+        logger.debug("Add roles and create channels...")
+        await asyncio.gather(
+            self.author.add_role(self.discord.roles[Role.JUDGE], reason=self.reason),
+            self.bot.rest.add_role_to_member(
                 self.guild_id,
-                name=f"{self.tournament.prefix}Judge",
-                mentionable=True,
-                reason=self.reason,
-            ),
-            self.bot.rest.create_role(
-                self.guild_id,
-                name=f"{self.tournament.prefix}Spectator",
-                mentionable=True,
-                reason=self.reason,
-            ),
-            self.bot.rest.create_role(
-                self.guild_id,
-                name=f"{self.tournament.prefix}Player",
-                mentionable=True,
+                self.bot.get_me(),
+                self.discord.roles[Role.JUDGE],
                 reason=self.reason,
             ),
         )
-        self.tournament.roles[self.tournament.JUDGE] = judge_role.id
-        self.tournament.roles[self.tournament.SPECTATOR] = spectator_role.id
-        self.tournament.roles[self.tournament.PLAYER] = player_role.id
+        await self._align_channels(raise_on_exists=True)
+        # author is now a judge, he can configure (next step)
+        self.author.role_ids.append(self.discord.roles[Role.JUDGE].id)
         logger.debug("Register tournament in DB...")
+        self.tournament.extra["discord"] = self.discord.to_json()
         db.create_tournament(
             self.connection,
-            self.tournament.prefix,
             self.guild_id,
             self.category_id,
             self.tournament.to_json(),
         )
-        logger.debug("Add roles and create channels...")
-        results = await asyncio.gather(
-            self.author.add_role(judge_role, reason=self.reason),
-            self.bot.rest.add_role_to_member(
-                self.guild_id, self.bot.get_me(), judge_role, reason=self.reason
-            ),
-            self.bot.rest.create_guild_text_channel(
-                self.guild_id,
-                "Judges",
-                category=self.category_id or hikari.UNDEFINED,
-                reason=self.reason,
-                permission_overwrites=[
-                    hikari.PermissionOverwrite(
-                        id=self.guild_id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        deny=perm.TEXT,
-                    ),
-                    hikari.PermissionOverwrite(
-                        id=judge_role.id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        allow=perm.TEXT,
-                    ),
-                ],
-            ),
-            self.bot.rest.create_guild_voice_channel(
-                self.guild_id,
-                "Judges",
-                category=self.category_id or hikari.UNDEFINED,
-                bitrate=96000,
-                reason=self.reason,
-                permission_overwrites=[
-                    hikari.PermissionOverwrite(
-                        id=self.guild_id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        deny=perm.VOICE,
-                    ),
-                    hikari.PermissionOverwrite(
-                        id=judge_role.id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        allow=perm.VOICE,
-                    ),
-                ],
-            ),
-        )
-        # author is now a judge, he can configure (next step)
-        self.author.role_ids.append(judge_role.id)
-        self.tournament.channels[tournament.Tournament.JUDGE_TEXT] = results[2].id
-        self.tournament.channels[tournament.Tournament.JUDGE_VOICE] = results[3].id
-        logger.debug("Update tournament data")
-        self.update()
-        # await set_judge_permissions(self.connection, self.bot, self.guild_id)
+        # now configure the tournament
         next_step = ConfigureTournament.copy_from_interaction(self)
         await next_step()
 
@@ -640,29 +933,30 @@ class CloseTournament(BaseCommand):
 
         async def __call__(self) -> None:
             await self.deferred()
-            if self.channel_id in self.tournament.channels.values():
+            all_channels = self.discord.all_channels_ids()
+            if self.channel_id in all_channels:
                 raise CommandFailed(
                     "This command can only be issued in the top level channel "
                     "(where you opened the tournament)."
                 )
             results = await asyncio.gather(
                 *(
-                    self.bot.rest.delete_channel(channel)
-                    for channel in self.tournament.channels.values()
+                    self.bot.rest.delete_channel(channel_id)
+                    for channel_id in all_channels
                 ),
                 return_exceptions=True,
             )
             results.extend(
                 await asyncio.gather(
                     *(
-                        self.bot.rest.delete_role(self.guild_id, role_id)
-                        for role_id in self.tournament.roles.values()
+                        self.bot.rest.delete_role(self.guild_id, role)
+                        for role in self.tournament.roles.values()
                     ),
                     return_exceptions=True,
                 )
             )
-            self.tournament.channels = []
-            self.tournament.roles = []
+            self.discord.channels.clear()
+            self.discord.roles.clear()
             self.update()
             db.close_tournament(self.connection, self.guild_id, self.category_id)
             COMPONENTS.pop("confirm-close", None)
@@ -762,7 +1056,7 @@ class Register(BaseCommand):
         await self.bot.rest.add_role_to_member(
             self.guild_id,
             discord_id,
-            self.tournament.roles[self.tournament.PLAYER],
+            self.discord.roles[Role.PLAYER],
             reason=self.reason,
         )
         description = "You are successfully registered for the tournament."
@@ -854,7 +1148,7 @@ class RegisterPlayer(BaseCommand):
             await self.bot.rest.add_role_to_member(
                 self.guild_id,
                 user,
-                self.tournament.roles[self.tournament.PLAYER],
+                self.discord.roles[Role.PLAYER],
                 reason=self.reason,
             )
         self.update()
@@ -922,6 +1216,12 @@ class Drop(BaseCommand):
     OPTIONS = []
 
     async def __call__(self) -> None:
+        await self.bot.rest.remove_role_from_member(
+            self.guild_id,
+            self.author,
+            self.discord.roles[Role.PLAYER],
+            reason=self.reason,
+        )
         self.tournament.drop(self.author.id)
         self.update()
         await self.create_or_edit_response(
@@ -954,6 +1254,13 @@ class DropPlayer(BaseCommand):
     async def __call__(
         self, user: Optional[hikari.Snowflake] = None, vekn: Optional[str] = None
     ) -> None:
+        if user:
+            await self.bot.rest.remove_role_from_member(
+                self.guild_id,
+                user,
+                self.discord.roles[Role.PLAYER],
+                reason=self.reason,
+            )
         self.tournament.drop(user or vekn)
         self.update()
         await self.create_or_edit_response("Dropped")  # cannot display them anymore
@@ -1046,14 +1353,14 @@ class Appoint(BaseCommand):
             await self.bot.rest.add_role_to_member(
                 self.guild_id,
                 user,
-                self.tournament.roles[self.tournament.JUDGE],
+                self.discord.roles[Role.JUDGE],
                 reason=self.reason,
             )
         else:
             await self.bot.rest.add_role_to_member(
                 self.guild_id,
                 user,
-                self.tournament.roles[self.tournament.SPECTATOR],
+                self.discord.roles[Role.SPECTATOR],
                 reason=self.reason,
             )
         await self.create_or_edit_response(
@@ -1207,28 +1514,16 @@ class Round(BaseCommand):
                 description="Table channels are being opened and roles assigned",
             )
         )
-        table_roles = await asyncio.gather(
-            *(
-                self.bot.rest.create_role(
-                    guild=self.guild_id,
-                    name=self.tournament.table_name(i + 1),
-                    mentionable=True,
-                    reason=self.reason,
-                )
-                for i in range(round.seating.tables_count())
-            )
-        )
-        for role in table_roles:
-            self.tournament.roles[role.name] = role.id
+        await self._align_roles()
         player_roles = []
-        for role, table in zip(table_roles, round.seating.iter_tables()):
+        for role, table in zip(self.discord.table_roles(), round.seating.iter_tables()):
             for number in table:
                 if number not in self.tournament.players:
                     continue
                 discord_id = self.tournament.players[number].discord
                 if not discord_id:
                     continue
-                player_roles.append([discord_id, role.id])
+                player_roles.append([discord_id, role])
         await asyncio.gather(
             *(
                 self.bot.rest.add_role_to_member(
@@ -1237,76 +1532,7 @@ class Round(BaseCommand):
                 for user, role in player_roles
             )
         )
-        judge_role_id = self.tournament.roles[self.tournament.JUDGE]
-        spectator_role_id = self.tournament.roles[self.tournament.SPECTATOR]
-        channels = []
-        channels.extend(
-            self.bot.rest.create_guild_text_channel(
-                guild=self.guild_id,
-                name=self.tournament.table_name(i),
-                reason=self.reason,
-                permission_overwrites=[
-                    hikari.PermissionOverwrite(
-                        id=self.guild_id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        deny=perm.TEXT,
-                    ),
-                    hikari.PermissionOverwrite(
-                        id=role.id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        allow=perm.TEXT,
-                    ),
-                    hikari.PermissionOverwrite(
-                        id=judge_role_id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        allow=perm.TEXT,
-                    ),
-                    hikari.PermissionOverwrite(
-                        id=spectator_role_id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        allow=perm.SPECTATE_TEXT,
-                    ),
-                ],
-            )
-            for i, role in enumerate(table_roles, 1)
-        )
-        channels.extend(
-            self.bot.rest.create_guild_voice_channel(
-                guild=self.guild_id,
-                name=self.tournament.table_name(i),
-                reason=self.reason,
-                bitrate=96000,
-                permission_overwrites=[
-                    hikari.PermissionOverwrite(
-                        id=self.guild_id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        deny=perm.VOICE,
-                    ),
-                    hikari.PermissionOverwrite(
-                        id=role.id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        allow=perm.VOICE,
-                    ),
-                    hikari.PermissionOverwrite(
-                        id=judge_role_id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        allow=perm.JUDGE_VOICE,
-                    ),
-                    hikari.PermissionOverwrite(
-                        id=spectator_role_id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        allow=perm.SPECTATE_VOICE,
-                    ),
-                ],
-            )
-            for i, role in enumerate(table_roles, 1)
-        )
-        channels = await asyncio.gather(*channels)
-        for channel in channels:
-            if isinstance(channel, hikari.GuildTextChannel):
-                self.tournament.channels[f"text-{channel.name}".lower()] = channel.id
-            elif isinstance(channel, hikari.GuildVoiceChannel):
-                self.tournament.channels[f"voice-{channel.name}".lower()] = channel.id
+        await self._align_channels()
         await asyncio.gather(
             *(self._display_seating(i + 1) for i in range(round.seating.tables_count()))
         )
@@ -1331,41 +1557,8 @@ class Round(BaseCommand):
 
     async def _delete_round_tables(self, finals: bool = False) -> None:
         """Delete table channels and roles used for the round."""
-        # TODO: tables roles and channels retrieval should be coded in tournament
-        if finals:
-            table_names = [f"{self.tournament.prefix}Finals"]
-        else:
-            table_names = [
-                self.tournament.table_name(i + 1)
-                for i in range(self.tournament.rounds[-1].seating.tables_count())
-            ]
-        roles = [self.tournament.roles.pop(t, None) for t in table_names]
-        roles = [r for r in roles if r]
-        text_channels = [
-            self.tournament.channels.pop(f"TEXT-{t}".lower(), None) for t in table_names
-        ]
-        voice_channels = [
-            self.tournament.channels.pop(f"VOICE-{t}".lower(), None)
-            for t in table_names
-        ]
-        text_channels = [c for c in text_channels if c]
-        voice_channels = [c for c in voice_channels if c]
-        await asyncio.gather(
-            *(
-                [
-                    self.bot.rest.delete_channel(channel)
-                    for channel in text_channels + voice_channels
-                ]
-                + [
-                    self.bot.rest.delete_role(
-                        self.guild_id,
-                        role,
-                    )
-                    for role in roles
-                ]
-            ),
-            return_exceptions=True,
-        )
+        await self._align_roles(silence_exceptions=True)
+        await self._align_channels(silence_exceptions=True)
 
     async def finish(self, keep_checkin: bool = False) -> None:
         """Finish round (checks scores consistency)"""
@@ -1392,6 +1585,13 @@ class Round(BaseCommand):
         """Add player to a 4-players table"""
         await self.deferred()
         self.tournament.round_add(user or vekn, table)
+        if user:
+            await self.bot.rest.add_role_to_member(
+                self.guild_id,
+                user,
+                self.discord.roles[Role.PLAYER],
+                reason=self.reason,
+            )
         await self._display_seating(table)
         self.update()
         await self.create_or_edit_response(f"Player added to table {table}")
@@ -1402,6 +1602,13 @@ class Round(BaseCommand):
         """Remove player from a 5-players table"""
         await self.deferred()
         table = self.tournament.round_remove(user or vekn)
+        if user:
+            await self.bot.rest.remove_role_from_member(
+                self.guild_id,
+                user,
+                self.discord.roles[Role.PLAYER],
+                reason=self.reason,
+            )
         await self._display_seating(table)
         self.update()
         await self.create_or_edit_response(f"Player removed from table {table}")
@@ -1424,14 +1631,8 @@ class Finals(BaseCommand):
                 description="Finals channels are being opened and roles assigned",
             )
         )
-        self.update()
-        table_role = await self.bot.rest.create_role(
-            guild=self.guild_id,
-            name=f"{self.tournament.prefix}Finals",
-            mentionable=True,
-            reason=self.reason,
-        )
-        self.tournament.roles[table_role.name] = table_role.id
+        await self._align_roles()
+        await self._align_channels()
         finalists = []
         for number in round.seating[0]:
             if number not in self.tournament.players:
@@ -1445,77 +1646,13 @@ class Finals(BaseCommand):
                 self.bot.rest.add_role_to_member(
                     guild=self.guild_id,
                     user=discord_id,
-                    role=table_role,
+                    role=self.discord.roles[1],
                     reason=self.reason,
                 )
                 for discord_id in finalists
             )
         )
-        judge_role_id = self.tournament.roles[self.tournament.JUDGE]
-        spectator_role_id = self.tournament.roles[self.tournament.SPECTATOR]
-        channels = [
-            self.bot.rest.create_guild_text_channel(
-                guild=self.guild_id,
-                name=f"{self.tournament.prefix}Finals",
-                reason=self.reason,
-                permission_overwrites=[
-                    hikari.PermissionOverwrite(
-                        id=self.guild_id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        deny=perm.TEXT,
-                    ),
-                    hikari.PermissionOverwrite(
-                        id=table_role.id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        allow=perm.TEXT,
-                    ),
-                    hikari.PermissionOverwrite(
-                        id=judge_role_id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        allow=perm.TEXT,
-                    ),
-                    hikari.PermissionOverwrite(
-                        id=spectator_role_id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        allow=perm.SPECTATE_TEXT,
-                    ),
-                ],
-            ),
-            self.bot.rest.create_guild_voice_channel(
-                guild=self.guild_id,
-                name=f"{self.tournament.prefix}Finals",
-                reason=self.reason,
-                permission_overwrites=[
-                    hikari.PermissionOverwrite(
-                        id=self.guild_id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        deny=perm.VOICE,
-                    ),
-                    hikari.PermissionOverwrite(
-                        id=table_role.id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        allow=perm.VOICE,
-                    ),
-                    hikari.PermissionOverwrite(
-                        id=judge_role_id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        allow=perm.JUDGE_VOICE,
-                    ),
-                    hikari.PermissionOverwrite(
-                        id=spectator_role_id,
-                        type=hikari.PermissionOverwriteType.ROLE,
-                        allow=perm.SPECTATE_VOICE,
-                    ),
-                ],
-            ),
-        ]
-        channels = await asyncio.gather(*channels)
-        for channel in channels:
-            if isinstance(channel, hikari.GuildTextChannel):
-                name = channel.name.lower()
-                self.tournament.channels[f"text-{name}"] = channels[0].id
-            elif isinstance(channel, hikari.GuildVoiceChannel):
-                self.tournament.channels[f"voice-{name}"] = channels[1].id
+        self.update()
         seeding_embed = hikari.Embed(
             title="Finals seeding",
             description="\n".join(
@@ -1523,10 +1660,9 @@ class Finals(BaseCommand):
             ),
         )
         await self.bot.rest.create_message(
-            channels[0].id,
+            self.discord.channels["TEXT"][1],
             embed=seeding_embed,
         )
-        self.update()
         await self.create_or_edit_response(
             embed=seeding_embed,
             user_mentions=True,
@@ -1763,7 +1899,7 @@ class Note(BaseCommand):
                 "note-upgrade",
                 "Disqualification",
                 partialclass(
-                    Note.ApplyNote, vekn, note, tournament.NoteLevel.WARNING, True
+                    Note.ApplyNote, user, vekn, note, tournament.NoteLevel.WARNING, True
                 ),
             )
         elif previous_notes and previous_level == tournament.NoteLevel.CAUTION:
@@ -1771,7 +1907,12 @@ class Note(BaseCommand):
                 "note-upgrade",
                 "Warning",
                 partialclass(
-                    Note.ApplyNote, vekn, note, tournament.NoteLevel.WARNING, False
+                    Note.ApplyNote,
+                    user,
+                    vekn,
+                    note,
+                    tournament.NoteLevel.WARNING,
+                    False,
                 ),
             )
         elif previous_notes and previous_level == tournament.NoteLevel.NOTE:
@@ -1779,7 +1920,12 @@ class Note(BaseCommand):
                 "note-upgrade",
                 "Caution",
                 partialclass(
-                    Note.ApplyNote, vekn, note, tournament.NoteLevel.CAUTION, False
+                    Note.ApplyNote,
+                    user,
+                    vekn,
+                    note,
+                    tournament.NoteLevel.CAUTION,
+                    False,
                 ),
             )
 
@@ -1804,7 +1950,7 @@ class Note(BaseCommand):
             .add_to_container()
         )
         COMPONENTS[f"note-continue-{self.author.id}"] = partialclass(
-            Note.ApplyNote, vekn, note, level, False
+            Note.ApplyNote, user, vekn, note, level, False
         )
         COMPONENTS["note-cancel"] = Note.Cancel
         if previous_notes:
@@ -1841,6 +1987,7 @@ class Note(BaseCommand):
 
         def __init__(
             self,
+            user: Optional[hikari.Snowflake],
             vekn: str,
             note: str,
             level: tournament.NoteLevel,
@@ -1848,6 +1995,7 @@ class Note(BaseCommand):
             *args,
             **kwargs,
         ):
+            self.user = user
             self.vekn = vekn
             self.note = note
             self.level = level
@@ -1858,6 +2006,13 @@ class Note(BaseCommand):
             self.tournament.note(self.vekn, self.author.id, self.level, self.note)
             if self.disqualify:
                 self.tournament.drop(self.vekn, tournament.DropReason.DISQUALIFIED)
+                if self.user:
+                    await self.bot.rest.remove_role_from_member(
+                        self.guild_id,
+                        self.user,
+                        self.discord.roles[Role.PLAYER],
+                        reason=self.reason,
+                    )
             self.update()
             if self.level == tournament.NoteLevel.NOTE:
                 await self.create_or_edit_response(
@@ -1917,7 +2072,7 @@ class Announce(BaseCommand):
 
     async def __call__(self) -> None:
         await self.deferred()
-        judges_channel = self.tournament.channels[self.tournament.JUDGE_TEXT]
+        judges_channel = self.discord.channels["TEXT"][Role.JUDGE]
         current_round = self.tournament.current_round
         if self.tournament.state == tournament.TournamentState.CHECKIN:
             current_round += 1
@@ -2003,7 +2158,7 @@ class Announce(BaseCommand):
             )
 
         elif self.tournament.state == tournament.TournamentState.CHECKIN:
-            players_role = self.tournament.roles[self.tournament.PLAYER]
+            players_role = self.discord.roles[Role.PLAYER]
             embed = hikari.Embed(
                 title=(f"{self.tournament.name} — CHECK-IN — {current_round}"),
                 description=(
@@ -2164,7 +2319,7 @@ class Status(BaseCommand):
         await self.deferred(hikari.MessageFlag.EPHEMERAL)
         if not self.tournament:
             raise CommandFailed("No tournament in progress")
-        judge_role_id = self.tournament.roles[self.tournament.JUDGE]
+        judge_role = self.discord.roles[Role.JUDGE]
         embed = hikari.Embed(
             title=f"{self.tournament.name} — {self.tournament.players.count} players"
         )
@@ -2183,7 +2338,7 @@ class Status(BaseCommand):
                 if self.tournament.flags & tournament.TournamentFlag.VEKN_REQUIRED:
                     embed.description += (
                         "\nThis tournament requires a **VEKN ID#**. "
-                        f"If you do not have one, ask a <@&{judge_role_id}> to help "
+                        f"If you do not have one, ask a <@&{judge_role.id}> to help "
                         "with your registration."
                     )
         else:
@@ -2211,15 +2366,10 @@ class Status(BaseCommand):
             if info.status == tournament.PlayerStatus.PLAYING:
                 if self.tournament.rounds[-1].finals:
                     seat = "seed"
-                    text_channel = f"text-{self.tournament.prefix}finals".lower()
-                    voice_channel = f"voice-{self.tournament.prefix}finals".lower()
                 else:
                     seat = "seat"
-                    table_name = self.tournament.table_name(info.table)
-                    text_channel = f"text-{table_name}".lower()
-                    voice_channel = f"voice-{table_name}".lower()
-                text_channel = self.tournament.channels.get(text_channel, None)
-                voice_channel = self.tournament.channels.get(voice_channel, None)
+                text_channel = self.discord.channels["TEXT"].get(info.table, None)
+                voice_channel = self.discord.channels["VOICE"].get(info.table, None)
                 if text_channel:
                     embed.description = (
                         f"You are {seat} {info.position} on <#{text_channel}>\n"
@@ -2405,18 +2555,12 @@ class PlayerInfo(BaseCommand):
                     value=("Player is checked-in and ready to play."),
                 )
             elif self.tournament.state == tournament.TournamentState.PLAYING:
-                # TODO factorize this part
                 if self.tournament.rounds[-1].finals:
                     seat = "seed"
-                    text_channel = f"text-{self.tournament.prefix}finals".lower()
-                    voice_channel = f"voice-{self.tournament.prefix}finals".lower()
                 else:
                     seat = "seat"
-                    table_name = self.tournament.table_name(info.table)
-                    text_channel = f"text-{table_name}".lower()
-                    voice_channel = f"voice-{table_name}".lower()
-                text_channel = self.tournament.channels.get(text_channel, None)
-                voice_channel = self.tournament.channels.get(voice_channel, None)
+                text_channel = self.discord.channels["TEXT"].get(info.table, None)
+                voice_channel = self.discord.channels["VOICE"].get(info.table, None)
                 if text_channel:
                     description = (
                         f"Player is {seat} {info.position} on <#{text_channel}>\n"
@@ -2775,150 +2919,20 @@ class ResetChannels(BaseCommand):
     async def __call__(self) -> None:
         """Realign channels on what we have registered."""
         await self.deferred()
-        judge_role_id = self.tournament.roles[self.tournament.JUDGE]
-        spectator_role_id = self.tournament.roles[self.tournament.SPECTATOR]
-        channels = await self.bot.rest.fetch_guild_channels(self.guild_id)
-        channels = [
-            c
-            for c in channels
-            if c.type in {hikari.ChannelType.GUILD_TEXT, hikari.ChannelType.GUILD_VOICE}
-        ]
-        if self.category_id:
-            channels = [c for c in channels if c.parent_id == self.category_id]
-        channels = [c for c in channels if c.name.startswith(self.tournament.prefix)]
-        deleted = 0
-        for c in channels:
-            prefix = {
-                hikari.ChannelType.GUILD_TEXT: "text-",
-                hikari.ChannelType.GUILD_VOICE: "voice-",
-            }[c.type]
-            if prefix + c.name.lower() not in self.tournament.channels:
-                logger.info("deleting spurious channel %s", c)
-                await self.bot.rest.delete_channel(c.id)
-                deleted += 1
-        to_update = {}
-        for k, v in self.tournament.channels.items():
-            try:
-                await self.bot.rest.fetch_channel(v)
-            except hikari.NotFoundError:
-                logger.info("Channel %s missing", k)
-                if k == self.tournament.JUDGE_TEXT:
-                    to_update[k] = await self.bot.rest.create_guild_text_channel(
-                        self.guild_id,
-                        "Judges",
-                        category=self.category_id or hikari.UNDEFINED,
-                        reason=self.reason,
-                        permission_overwrites=[
-                            hikari.PermissionOverwrite(
-                                id=self.guild_id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                deny=perm.TEXT,
-                            ),
-                            hikari.PermissionOverwrite(
-                                id=judge_role_id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                allow=perm.TEXT,
-                            ),
-                        ],
-                    )
-                elif k == self.tournament.JUDGE_VOICE:
-                    to_update[k] = await self.bot.rest.create_guild_voice_channel(
-                        self.guild_id,
-                        "Judges",
-                        category=self.category_id or hikari.UNDEFINED,
-                        bitrate=96000,
-                        reason=self.reason,
-                        permission_overwrites=[
-                            hikari.PermissionOverwrite(
-                                id=self.guild_id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                deny=perm.VOICE,
-                            ),
-                            hikari.PermissionOverwrite(
-                                id=judge_role_id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                allow=perm.VOICE,
-                            ),
-                        ],
-                    )
-                elif k.startswith(f"text-{self.tournament.prefix}".lower()):
-                    group_name = self.tournament.prefix + stringcase.titlecase(
-                        k.replace(f"text-{self.tournament.prefix}".lower(), "")
-                    ).replace(" ", "-")
-                    table_role_id = self.tournament.roles[group_name]
-                    to_update[k] = await self.bot.rest.create_guild_text_channel(
-                        guild=self.guild_id,
-                        name=group_name.lower(),
-                        reason=self.reason,
-                        permission_overwrites=[
-                            hikari.PermissionOverwrite(
-                                id=self.guild_id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                deny=perm.TEXT,
-                            ),
-                            hikari.PermissionOverwrite(
-                                id=table_role_id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                allow=perm.TEXT,
-                            ),
-                            hikari.PermissionOverwrite(
-                                id=judge_role_id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                allow=perm.TEXT,
-                            ),
-                            hikari.PermissionOverwrite(
-                                id=spectator_role_id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                allow=perm.SPECTATE_TEXT,
-                            ),
-                        ],
-                    )
-                elif k.startswith(f"voice-{self.tournament.prefix}".lower()):
-                    group_name = self.tournament.prefix + stringcase.titlecase(
-                        k.replace(f"voice-{self.tournament.prefix}".lower(), "")
-                    ).replace(" ", "-")
-                    table_role_id = self.tournament.roles[group_name]
-                    to_update[k] = await self.bot.rest.create_guild_voice_channel(
-                        guild=self.guild_id,
-                        name=group_name,
-                        reason=self.reason,
-                        bitrate=96000,
-                        permission_overwrites=[
-                            hikari.PermissionOverwrite(
-                                id=self.guild_id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                deny=perm.VOICE,
-                            ),
-                            hikari.PermissionOverwrite(
-                                id=table_role_id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                allow=perm.VOICE,
-                            ),
-                            hikari.PermissionOverwrite(
-                                id=judge_role_id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                allow=perm.JUDGE_VOICE,
-                            ),
-                            hikari.PermissionOverwrite(
-                                id=spectator_role_id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                allow=perm.SPECTATE_VOICE,
-                            ),
-                        ],
-                    )
-                else:
-                    logger.warning("Unable to recreate channel %s", k)
-
-        self.tournament.channels.update({k: c.id for k, c in to_update.items()})
+        await self._align_roles
+        await self._align_channels
         self.update()
         embed = hikari.Embed(
             title="Channels reset",
-            description=f"{len(to_update)} channels created, {deleted} deleted.",
+            description="Channels have been realigned.",
         )
         await self.create_or_edit_response(embed=embed)
 
 
-# TODO upload decklist as txt file attachment
-# TODO Display table score on table channel
 # TODO Include GW from current round in status when game is finished and fully reported
-#
+# TODO Display table score on table channel
+# TODO Upload decklist as txt file attachment
+# TODO More buttons to guide user (especially on /status)
+# TODO Make admin access admin-only
+# TODO Use pydantic for serialization
+# TODO Make the bot configurable with server roles for command access

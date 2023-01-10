@@ -81,22 +81,20 @@ async def init():
         logger.debug("Initialising DB")
         cursor.execute(
             "CREATE TABLE IF NOT EXISTS tournament("
-            "active INTEGER, "
-            "prefix TEXT, "
+            "active BOOLEAN, "
             "guild TEXT, "
             "category TEXT, "
             "data json)"
         )
 
 
-def create_tournament(conn, prefix, guild_id, category_id, tournament_data):
+def create_tournament(conn, guild_id, category_id, tournament_data):
     cursor = conn.cursor()
     logger.debug("New tournament %s-%s: %s", guild_id, category_id, tournament_data)
     cursor.execute(
-        "INSERT INTO tournament (active, prefix, guild, category, data) "
-        "VALUES (1, %s, %s, %s, %s)",
+        "INSERT INTO tournament (active, guild, category, data) "
+        "VALUES (TRUE, %s, %s, %s)",
         [
-            prefix,
             str(guild_id),
             str(category_id) if category_id else "",
             tournament_data,
@@ -104,19 +102,10 @@ def create_tournament(conn, prefix, guild_id, category_id, tournament_data):
     )
 
 
-def get_active_prefixes(conn, guild_id):
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT prefix FROM tournament WHERE active=1 AND guild=%s FOR SHARE",
-        [str(guild_id)],
-    )
-    return set(r[0] for r in cursor)
-
-
 async def get_active_tournaments(conn, guild_id):
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT data from tournament WHERE active=1 AND guild=%s FOR SHARE",
+        "SELECT data from tournament WHERE active=TRUE AND guild=%s FOR SHARE",
         [str(guild_id)],
     )
     return list(r[0] for r in cursor)
@@ -133,7 +122,7 @@ def update_tournament(conn, guild_id, category_id, tournament_data):
     # beware to update the cache before asking for a write
     TOURNAMENTS[(guild_id, category_id)] = tournament_data
     cursor.execute(
-        "UPDATE tournament SET data=%s WHERE active=1 AND guild=%s AND category=%s",
+        "UPDATE tournament SET data=%s WHERE active=TRUE AND guild=%s AND category=%s",
         [
             tournament_data,
             str(guild_id),
@@ -153,7 +142,7 @@ async def tournament(guild_id, category_id, update=False):
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT data from tournament "
-                "WHERE active=1 AND guild=%s AND category=%s"
+                "WHERE active=TRUE AND guild=%s AND category=%s"
                 + (" FOR UPDATE" if update else ""),
                 [str(guild_id), str(category_id) if category_id else ""],
             )
@@ -175,6 +164,7 @@ def close_tournament(conn, guild_id, category_id):
     logger.debug("Closing tournament %s-%s", guild_id, category_id)
     TOURNAMENTS.pop((guild_id, category_id), None)
     cursor.execute(
-        "UPDATE tournament SET active=0 WHERE active=1 AND guild=%s AND category=%s",
+        "UPDATE tournament SET active=FALSE "
+        "WHERE active=TRUE AND guild=%s AND category=%s",
         [str(guild_id), str(category_id) if category_id else ""],
     )

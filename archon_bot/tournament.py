@@ -263,8 +263,7 @@ class Tournament:
     def __init__(self, **kwargs):
         self.name: str = kwargs.get("name", "")
         self.flags: TournamentFlag = TournamentFlag(kwargs.get("flags", 0))
-        self.roles: Dict[str, hikari.Snowflake] = kwargs.get("roles", {})
-        self.channels: Dict[str, hikari.Snowflake] = kwargs.get("channels", {})
+        self.extra: dict = kwargs.get("extra", {})
         self.max_rounds: int = kwargs.get("max_rounds", 0)
         self.current_round: int = kwargs.get("current_round", 0)
         # TODO use _state and replace access with a property
@@ -289,19 +288,11 @@ class Tournament:
     def __bool__(self):
         return bool(self.name)
 
-    @property
-    def prefix(self):
-        return "".join([w[0] for w in self.name.split()][:3]) + "-"
-
-    def table_name(self, table_num):
-        return f"{self.prefix}Table-{table_num}"
-
     def to_json(self):
         return {
             "name": self.name,
             "flags": self.flags,
-            "roles": self.roles,
-            "channels": self.channels,
+            "extra": self.extra,  # additional data (eg. HMI like Discord ids)
             "max_rounds": self.max_rounds,
             "current_round": self.current_round,
             "state": self.state,
@@ -745,6 +736,12 @@ class Tournament:
         if round_number >= len(self.rounds):
             raise CommandFailed(f"Round {round_number} has yet to be played")
         return round_number
+
+    def tables_count(self, round_number: Optional[int] = None):
+        round_number = self._check_round_number(round_number)
+        if round_number < 1:
+            return 0
+        return len(self.rounds[round_number - 1].seating)
 
     def report(
         self,

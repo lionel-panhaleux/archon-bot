@@ -30,7 +30,6 @@ logging.basicConfig(
 bot = hikari.GatewayBot(os.getenv("DISCORD_TOKEN") or "")
 UPDATE = os.getenv("UPDATE")
 RESET = os.getenv("RESET")
-SEATING = []  # do only one seating at a time
 
 # ####################################################################### Init KRCG
 krcg.vtes.VTES.load()

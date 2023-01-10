@@ -2794,6 +2794,8 @@ class DownloadReports(BaseCommand):
         return self._build_json("Decks.json", data)
 
     def _player_first_last_name(self, player):
+        if not player.name:
+            return ["", ""]
         name = player.name.split(" ", 1)
         if len(name) < 2:
             name.append("")

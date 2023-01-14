@@ -17,104 +17,241 @@ if you want the bot to run properly on your server.
 
 Players:
 
--   Register: `/register`
--   Check in: `/check-in`
--   Report your result: `/report`
--   Drop out: `/drop`
--   Check your status: `/status`
+- Register: `/register [vekn] [name] [decklist]`
+- Check in: `/check-in `
+- Report your result: `/report [vp]`
+- Drop out: `/drop`
+- Check your status: `/status`
 
 Judges:
 
--   Open the tournament: `archon open My Tournament`
--   Appoint judges: `archon appoint @someone`
--   Allow bots in players tables: `archon appoint @timer @krcg`
--   Registration: `archon register 1000123 Alice Allister`
--   List registered players: `archon registrations`
--   Upload registration file: `archon upload`
--   Open check-in: `archon checkin-start`
--   List checked in players: `archon players`
--   Close check-in: `archon checkin-stop`
--   Start a round: `archon round-start`
--   Issue caution: `archon caution text explaining why`
--   Issue warning: `archon warning text explaining why`
--   Disqualify: `archon disqualify @someone text explaining why`
--   Check the round results: `archon results`
--   Fix a result: `archon fix @someone 2`
--   Finish a round: `archon round-finish`
--   Display standings: `archon standings`
--   Run the finals: `archon finals`
--   Close the tournament: `archon close`
+A number of commands target a specific player. In those cases, you can always use either
+the player's ID in the tournament (VEKN) _or_ the Discord user. The Discord user might
+be more practical for online tournaments, where using the idea might be easier in some
+cases, and indispensible for offline tournaments.
 
-For commands mentioning a player, you can use either a Discord `@someone` mention
-or the ID of the listed player.
+- Opening the tournament:
+    * Open a new tournament: `/open-tournament`
+    * Announcement (help and guidance messages for both players and judges): `/announce`
+    * Appoint judges and bots: `/appoint [role] [user]`
+    * Configure the tournament: `/configure-tournament`
+    * Open check-in (confirm players presence): `/open-check-in`
+- Player management:
+    * Register a player (offline or missing VEKN): `/register-player [vekn] [name] [decklist] [user]`
+    * Add a note, caution or warning to a player: `/note [level] [note] [user] [vekn]`
+    * Get a player's info, including notes and warnings: `/player-info [user] [vekn] `
+    * Drop a player: `/drop-player [user] [vekn]`
+    * Disqualify a player: `/disqualify [user] [vekn] [note]`
+    * Full players list: `/players-list [public]`
+- Rounds management:
+    * Start a new round: `/round start`
+    * Check round results: `/results [round] [public]`
+    * Fix a player's VP count: `/fix-report [vp] [user] [vekn] [round]`
+    * End a round: `/round finish [keep_checkin]`
+    * Current standings (only finished rounds count): `/standings`
+    * Begin finals: `/finals`
+    * Reset the newly created round: `/round reset`
+    * Add a player to a 4 players table (if play has not begun): `/round add [table]`
+    * Remove a player from a 5 players table (if play has not begun): `/round remove [user] [vekn]`
+    * Validate an odd score situation (eg. because of a Judge ruling): `/validate-score`
+- Misc:
+    * Make a raffle amoung players `/raffle [count]`
+    * Reset the channels `/reset-channels`
+- Ending the tournament:
+    * Download the reports: `/download-reports`
+    * Close the tournament (make sure you downloaded the reports first): `/close-tournament`
 
 ## Usage
 
 The archon bot can be used in a variety of tournament settings.
 The archon bot can only run **one tournament per category** in a Discord server.
 
+### Simplistic guide
+
+Simply choose a category (ie. a folder) in your discord server
+(or ask an admin to open one for you), and use the `/open-tournament` command.
+
+**The channel in which you use the `/open-tournament` command becomes the main tournament channel.**
+
+The bot will then proceed to guide you in creating your tournament and using its commands.
+
+If you're unsure what to do, **at any stage use the `/announce` command**.
+It will display help and guidance messages in the main and judges channel.
+
 ### Basic tournament handling
 
 This is the most basic case, and it is easy. Just open a tournament:
 
 ```
-archon open My Tournament
+/open-tournament name: My Tournament
 ```
+
+The bot will then guide you in configuring your tournament
 
 As organiser, you automatically get the Judge role and access to the `#Judges` channels.
 You can appoint some additional judges to help you:
 
 ```
-archon appoint @your_friendly_judge @another_one
+/appoint role: Judge user: @your_friendly_judge
 ```
 
-Do not forget to **give the judge status to the bots** you want to make available
-to the players in the table channels:
+Do not forget to **appoint the bots** you want to make available
+to the players in the table channels (timer bot, krcg):
 
 ```
-archon appoint @timer @krcg
+/appoint role: Bot user: @timer
 ```
 
-You can optionally add some spectators:
+You can also optionally add some spectators, they will have acces to all tables.
+It's useful if you like to give streamers access to the vocal channels:
 
 ```
-archon spectator @some_guest
+/appoint role: Spectator user: @some_guest
 ```
 
-When you're about to start the first round, open the check-in:
+#### Tournament options
+
+##### Number of rounds
+
+At tournament creation (when you use `/open-tournament`), you can indicate the maximum number of rounds.
+It is only relevant if you're planning some kind of league or championship where there are more time slots for rounds
+than the number of rounds you expect each player to play.
+For example, if you're planning 1 "rounds slots" every Saturday for six weeks (6 possible dates),
+but only require your players to play and complete 3 rounds. In that case use the optional `rounds`
+parameter on tournament creation:
 
 ```
-archon checkin-start
+/open-tournament rounds: 3
 ```
 
-Players can now check-in to the tournament by issuing simply:
+This will prevent players to be able to play more than this number of rounds,
+even if you're running more "rounds slots" than this with the bots.
+
+In most tournaments, this parameter is useless because you expect players to play all the rounds you're running.
+
+##### VEKN ID requirement
+
+In official tournament, a VEKN ID is required. The bot will check is existence of the VEKN ID against the VEKN registry,
+although it cannot verify the player is actually the right person (we trust the players to provide the _right_ id).
+Different players cannot have the same VEKN ID so if 
+
+##### Decklist requirement
+
+##### Check-in (once or on each round)
+
+##### Standard or League
+
+
+#### Registration
+
+The tournament registrations are open as soon as you created the tournament.
+Players can use the `/register` command to register themselves.
+Depending on the tournament configuration, they might need to provide their VEKN ID
+or their deck list. The bot will guide them in providing the required information.
+
+Use the `/announce` command to provide guidance to everyone for the registration:
 
 ```
-archon checkin
+/announce
+```
+
+Players can then register easily with the `/register` command:
+
+```
+/register vekn: 1000123 decklist: https://vdb.im/decks/12e26be1ade44d3a938c0a5984a70230
+```
+
+- `vekn`: If the player has none and the tournament requires it, only a Judge can register them (see below)
+- `name`: The name the player would like to use for the tournament.
+  Optional if the VEKN is provided, since the name will then be fetched from the VEKN registry.
+- `decklist`: Only if the tournament requires it, VDB (standard and deck-in-url) and Amaranth URLs are accepted.
+  The decklist is _copied and saved_ by the bot when the command is issued.
+  If the decklist is modified by the player in VDB or Amaranth, it will not be taken into account by the bot.
+  They need to issue the command _again_ with a decklist URL (even if it's the same) to update the deck list in the bot registry.
+  For a standard (non-league) tournament, the bot will prevent a player to modify their decklist once the first round has started.
+
+If a VEKN ID is required and a player does not have one,
+or if a player is struggling with the commands, any Judge (including you) can register
+a player in their stead:
+
+```
+/register-player [vekn] [name] [decklist] [user]
+```
+
+- `vekn:` If the player has one. In that case, you don't need to fill the name, it will be fetched from the VEKN registry.
+- `name:` If the player has no VEKN or you're not using them. In that case, no need to fill the VEKN
+- `decklist:` A deck URL (either VDB or Amaranth)
+- `user:` The Discord user (optional, but without it they will not be able to check in themselves)
+
+You can display the list of registered players at any time
+
+```
+/players-list
+```
+
+Any **subsequent use of registration commands** on the same user/id will _update_ that player's registration with
+the additional information, overwriting the existing registration with the new information you provide.
+It will keep any information that was already there (vekn, name, deck list) if you do not provide a newer information for this field.
+
+Note that registering players in advance before the tournament is an option for convenience, it's not a requirement.
+Once the tournament begins, you should issue the `/open-check-in` command to let the bot know, you will still be able to
+proceed with registrations until you decide it's time for the first round (see below).
+
+#### Tournament day
+
+When the tournament is about to begin, open the check-in:
+
+```
+/open-check-in
+```
+
+Use the `/announce` command to provide guidance to everyone for the check-in:
+
+```
+/announce
+```
+
+Registered players can now check-in to the tournament by issuing simply:
+
+```
+/check-in
+```
+
+Note that only works if they have already registered in advance and the registration is linked to their Discord account.
+If not, they need to use the `/register` command as explained previously
+
+```
+/register vekn: 1000123 decklist: https://vdb.im/decks/12e26be1ade44d3a938c0a5984a70230
+```
+
+Since the check-in is open, this will also check them in directly
+(they do not need to issue a `/check-in` command after registration).
+
+You and other Judges can also register _and_ check-in players yourselves
+using the `/register-player` command as explained above:
+
+```
+/register-player [vekn] [name] [decklist] [user]
 ```
 
 You can display the list of checked-in players at any time
 
 ```
-archon players
+/players-list
 ```
 
-And display a reminder on how the check-in works for your players:
+And display a reminder on how the check-in works for your players regularily:
 
 ```
-archon
+/announce
 ```
 
-You can close the check-in when you like (this is optional):
+Once everyone has checked in, you can start the first round
+
+#### Round management
 
 ```
-archon checkin-stop
-```
-
-Once everyone has checked in, you can start the first round:
-
-```
-archon round-start
+/round start
 ```
 
 This command is the heart of the archon bot, it does multiple thing:
@@ -126,62 +263,91 @@ This command is the heart of the archon bot, it does multiple thing:
 -   Create text and voice channels for each table
 -   Display the seating in each table channel
 -   Assign roles to the players so they get access to their respective table
--   The archon bot and the judges have access to all channels
+-   The archon bot and theappointed bots and judges have access to all channels
 -   Spectators have access to all channels but cannot read or write in them
+
+At any point during the tournament, you can take notes on players
+(to share issues or remarks with other Judges will easily) and deliver cautions, warnings and disqualifications:
+
+```
+/note @target_player level: Caution note: Spurious draw of cards (on a do not replace card)
+```
 
 Once the round is finished, players should report their result (VPs):
 
 ```
-archon report 3
+/report 3
 ```
 
+Players report only _their_ victory points, not those of their opponents.
 The bot computes game wins automatically.
-You can check the results in the `#Judges` channel:
+You and other judges can check the round results:
 
 ```
-archon results
+/results
 ```
 
 If some results are not correct, any judge can fix them:
 
 ```
-archon fix @mistaken_player 2
+/fix-report @mistaken_player 2
 ```
 
 Once everything is OK, you can close the round, no more VP report will be accepted.
 This step is optional: you can also proceed to the next round directly.
 
 ```
-archon round-finish
+/round finish
 ```
 
-A judge can display the standings at any time,
-in the `#Judges` channel or in a public one:
+A judge can display the standings at any time:
 
 ```
-archon standings
+/standings
 ```
+
+You can _decide_ to share the standings publicly between rounds,
+although it is a decision you should debate with the Head Judge:
+
+```
+/standings public: True
+```
+
+Some judges feel displaying the standings between rounds can incite the players in
+taking them into account during their game (eg. purposefuly hindering a leading player),
+which is a violation of Tournament Rules. Others feel it's exciting and levels the playfield
+(reduces the impact of scouting).
+
+#### Finals and closing the tournament
 
 When all rounds have been played and reported, you can launch the finals:
 
 ```
-archon finals
+/finals
 ```
 
 The bot will do a "toss" to choose between runner-ups if necessary: it is random.
 Channels are created and the seeding order will be displayed.
 On a finals table, last seed chooses their seat first.
 Once the finals is finished, have the players report their results as usual
-or do it yourself with the `archon fix` command.
-Once the report is done, you can close the tournament:
+or do it yourself with the `/fix-report` command (see above).
+Once the report is done, you can download the tournament reports:
 
 ```
-archon close
+/download-reports
 ```
 
-This command must be run outside of bot-created channels,
-it will provide you a full tournament report as a CSV file.
-Bot-created channels and roles will be deleted.
+Tt will provide you a full tournament report as a CSV file, as well as archon-compatible
+CSV files if your were running a standard tournament with mandaotry VEKN IDs.
+
+You can then close the tournament:
+
+```
+/close-tournament
+```
+
+**Note the channels and roles created by the bot will be deleted**,
+including the `#Judges` channels. Make sure you have downloaded the reports first
 
 ### Corner cases
 
@@ -192,10 +358,11 @@ There are a few corner cases you might hit when handling a tournament.
 Some players might want to check in after the first round has already begun.
 They can always just check in for the next round, provided you kept the check-in open.
 Alternatively, if the other players haven't started to play yet,
-you can add the late comer to a 4 players table after he checked in:
+you can add the late comer to a 4 players table after they've registered:
 
 ```
-archon round-add @late_player
+/register-player vekn: 1000234 user: @late_player decklist: https://vdb.im/decks/12e26be1ade44d3a938c0a5984a70230
+/round add table: 3 user: @late_player
 ```
 
 #### Player dropping out
@@ -203,11 +370,25 @@ archon round-add @late_player
 Players can easily drop out of the tournament between rounds:
 
 ```
-archon drop
+/drop
 ```
 
 They can check in again later to participate in future rounds.
 The archon bot will take their absence into account when optimising the seating.
+Judges can also forcibly drop a player if they've just disappeared without warning:
+
+```
+/drop-player user: @late_player
+```
+
+- `vekn` or `user`: you can refer to the player by it's Discord handle or tournament ID.
+
+But beware that this does not count as a disqualification: the player can come back
+and check in again in a later round. If you want to disqualify a player, use:
+
+```
+/disqualify user: @late_player note: Aggressive conduct
+```
 
 #### Reset a round
 
@@ -215,42 +396,44 @@ If players are missing or new players are arriving late, it might be better to
 cancel the round you just started and start a new one:
 
 ```
-archon round-reset
-archon round-start
+/round reset
+[... fix registrations, drop absentees, etc.]
+/round start
 ```
 
-Note you can also use `round-reset` to reset the finals if you have a missing finalist.
+Note you can also use `/round reset` to reset the finals if you have a missing finalist.
 
 #### Cautions, warnings, disqualification
 
 Judges can issue cautions, warnings and disqualify players:
 
 ```
-archon caution drew an additional card
-archon warning additional cards again
-archon warning misrepresented the rules
-archon disqualify misrepresented the rules again
+/note user: @problematic_player level:caution note: drew an additional card
+/note user: @problematic_player level:warning note: additional cards again
+/note user: @problematic_player level:warning note: misrepresented the rules
 ```
+
+- `vekn` or `user`: you can refer to the player by it's Discord handle or tournament ID.
 
 If any caution or warning has been previously issued, the bot will display
-the previous issues so you can issue an additional penalty if you like.
-A judge can see the issued cautions and warnings for a given player:
+the previous issues and ask you if you want to upgrade the level of your penalty
+or disqualify the player (in case of a second warning).
 
-```
-archon player @problematic_player
-```
 
-#### Fix a previous round result
+#### Fix a round result
 
 You cannot close a round and start a new one if the score is incorrect,
-but this does not mean mistakes cannot happen. To fix a mistake in a previous round,
-a judge can use the `fix` command and indicate a previous round number.
-For example, to remove player_1 VP and give it to player_2 in round 1:
+but this does not mean mistakes cannot happen. To fix a mistake in a round,
+a judge can use the `/fix-result` command to modify reported results.
+It can be used for previous rounds too:
 
 ```
-archon fix @player_1 0 1
-archon fix @player_2 1 1
+/fix-result user: @player_1 vp: 1
+/fix-result user: @player_2 round: 1 vp: 2
 ```
+
+- `vekn` or `user`: you can refer to the player by it's Discord handle or tournament ID.
+- `round`: current round by default, but you can fix a previous round by giving its number.
 
 #### Validate odd VP situations
 
@@ -258,12 +441,15 @@ In some situations, a judge might decide to change the available VP total on a t
 For example if a player drops out of a round at the very beginning, he might decide
 to award only 0.5 VP to its predator, or no VP at all. In that case, the archon bot
 will see the total result as invalid because the total does not match.
-A judge can force an odd VP result to be accepted.
-For example, validate Table 1 on Round 2:
+A judge can force an odd VP result to be accepted:
 
 ```
-archon validate 1 2 Alice dropped out on turn two
+/validate-score table: 4 note: Disqualified John but awared only 0.5 VP to his predator, Alice
 ```
+
+- `table`: The table for which the odd score is to be validated
+- `note`: Explain why this odd scoring happened
+- `round`: current round by default, but you can fix a previous round by giving its number.
 
 ### Sanctioned tournament
 
@@ -422,35 +608,72 @@ and disqualifications are disabled** once you're in a staggered tournament.
 Although the archon bot is primarily intended for online play, you can
 use it to run an offline tournament too.
 
-You can register the player as they come as usual:
+You can take pre-registrations as usual:
 
 ```
-archon register 1000123 Alice Allister
+/register-player vekn: 1000123
 ```
 
-Once registrations are closed, you can just check all players in yourself:
+And on tournament day, open the check-in:
 
 ```
-archon checkin-all
+/open-check-in
 ```
 
-Then run your rounds normally:
+**Once you have opened the check-in, any registration also checks the player in**
+
+You can then register the player as they come as usual:
 
 ```
-archon round-start
+/register-player vekn: 1000123 decklist: https://vdb.im/decks/12e26be1ade44d3a938c0a5984a70230
 ```
 
-Any judge can register the results using the `fix` command over VEKN IDs:
+Just register them by name if they don't have a VEKN yet,
+but make sure to note down their email and domain (country, city) for VEKN registration:
 
 ```
-archon fix 1000123 2
+/register-player name: Alice Allister
+```
+
+The bot will issue a temporary ID (with a `P-` prefix) that you can use
+as the VEKN ID for further commands (eg. `P-4`).
+
+You can optionally ask or **let your players check in in Discord** if they like,
+they can link their Discord account to a registered VEKN using the `/register` command:
+
+```
+/register vekn: 1000123
+```
+
+This way, they can see their table and seating automatically and directly.
+Moreover, they will be able to report their result for each round with the `/report` command:
+
+```
+/report 2
+```
+
+With or without your players logged in on Discord, you can run your rounds normally:
+
+```
+/round start
+```
+
+Any judge can register the results using the `/fix-result` command over VEKN IDs:
+
+```
+/fix-result vekn:1000123 2
 ```
 
 If a player checks in between rounds, you can register them and check them in:
 
 ```
-archon register 1000234 Bob Beril
-archon checkin 1000234 -
+/register-player vekn: 1000234
+```
+
+And if a player drops in between rounds, just drop them:
+
+```
+/drop-player vekn: 1000234
 ```
 
 ## Contribute

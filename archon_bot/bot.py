@@ -65,9 +65,12 @@ async def on_ready(event: hikari.StartedEvent) -> None:
         return
     for command in registered_commands:
         try:
+            COMMANDS_TO_REGISTER[command.name].DISCORD_ID = command.id
             COMMANDS[command.id] = COMMANDS_TO_REGISTER[command.name]
         except KeyError:
             logger.exception("Received unknow command %s", command)
+    if RESET:
+        await db.reset()
 
 
 @bot.listen()

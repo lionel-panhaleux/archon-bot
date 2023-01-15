@@ -25,3 +25,13 @@ JUDGE_VOICE = (
     | hikari.Permissions.MUTE_MEMBERS
     | hikari.Permissions.DEAFEN_MEMBERS
 )
+ARCHON = (
+    hikari.Permissions.VIEW_CHANNEL
+    | hikari.Permissions.MANAGE_CHANNELS
+    | hikari.Permissions.CONNECT
+    | hikari.Permissions.READ_MESSAGE_HISTORY
+    | hikari.Permissions.SEND_MESSAGES
+    | hikari.Permissions.SEND_MESSAGES_IN_THREADS
+    | hikari.Permissions.ADD_REACTIONS
+    | hikari.Permissions.ATTACH_FILES
+)

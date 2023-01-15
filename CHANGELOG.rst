@@ -2,7 +2,10 @@
 -----------------
 
 - Improve DB access and concurrency management
-
+- Better Discord roles and channels management
+- Improved documentation
+- Fix a bug preventing to download reports in niche cases (unnamed players)
+- Fix a bug dropping players when registering their discord handle after the round begins
 
 0.23 (2022-05-21)
 -----------------

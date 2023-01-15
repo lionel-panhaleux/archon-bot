@@ -88,6 +88,13 @@ async def init():
         )
 
 
+async def reset():
+    async with connection(None, None) as conn:
+        cursor = conn.cursor()
+        logger.warning("Reset DB")
+        cursor.execute("TRUNCATE TABLE tournament")
+
+
 def create_tournament(conn, guild_id, category_id, tournament_data):
     cursor = conn.cursor()
     logger.debug("New tournament %s-%s: %s", guild_id, category_id, tournament_data)

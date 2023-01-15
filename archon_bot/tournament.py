@@ -33,7 +33,8 @@ class TournamentFlag(enum.IntFlag):
     VEKN_REQUIRED = enum.auto()  # whether a VEKN ID# is required for this tournament
     DECKLIST_REQUIRED = enum.auto()  # whether a decklist must be submitted
     CHECKIN_EACH_ROUND = enum.auto()  # whether players must check-in at every round
-    LEAGUE = enum.auto()  # in a league, players can register between rounds
+    MULTIDECK = enum.auto()  # whether players can change deck between rounds
+    REGISTER_BETWEEN = enum.auto()  # whether players can register between rounds
     STAGGERED = enum.auto()  # whether this is a staggered (6, 7, 11) tournament
 
 
@@ -41,7 +42,8 @@ class TournamentState(str, enum.Enum):
     REGISTRATION = "REGISTRATION"  # tournament has not begun, registration is open
     CHECKIN = "CHECKIN"  # check-in is open for next round
     PLAYING = "PLAYING"  # round in progress
-    WAITING = "WAITING"  # round finished, waiting for next round
+    WAITING_FOR_CHECKIN = "WAITING_FOR_CHECKIN"  # waiting for next round check-in
+    WAITING_FOR_START = "WAITING_FOR_START"  # waiting for next round to start
     FINISHED = "FINISHED"  # tournament is finished, finals have been played
 
 
@@ -360,7 +362,7 @@ class Tournament:
             if (
                 not judge
                 and self.current_round
-                and not self.flags & TournamentFlag.LEAGUE
+                and not self.flags & TournamentFlag.MULTIDECK
             ):
                 raise CommandFailed(
                     "The tournament has started: too late to change deck"
@@ -381,10 +383,10 @@ class Tournament:
             banned = [c.name for c, _ in deck.cards(lambda c: c.banned)]
             if any(banned):
                 raise CommandFailed(f"Banned cards included: {banned}")
-        # upsert the player info
-        if not judge and self.current_round and not self.flags & TournamentFlag.LEAGUE:
-            if vekn in self.players and deck:
-                raise CommandFailed("Tournament in progress: too late to change deck.")
+        playing = self.state == TournamentState.CHECKIN or (
+            self.state == TournamentState.WAITING_FOR_START
+            and (judge or self.flags & TournamentFlag.REGISTER_BETWEEN)
+        )
         if vekn in self.players:
             player = self.players[vekn]
             if name:
@@ -393,7 +395,12 @@ class Tournament:
                 player.discord = discord
             if deck:
                 player.deck = deck.to_minimal_json()
-            player.playing = self.state == TournamentState.CHECKIN
+            # this method can be called during a round or in between rounds,
+            # just to add/correct some information (decklist, discord ID)
+            # in that case, keep the playing status
+            player.playing = (
+                player.playing if self.state == TournamentState.PLAYING else playing
+            )
         else:
             if vekn and not temp_vekn:
                 name = await self._check_vekn(vekn)
@@ -406,7 +413,7 @@ class Tournament:
                 name=name,
                 discord=discord,
                 deck=deck.to_json() if deck else {},
-                playing=self.state == TournamentState.CHECKIN,
+                playing=playing,
             )
             self.players.add(player)
         # decklist requirement on check-in
@@ -486,7 +493,7 @@ class Tournament:
             raise CommandFailed("Round in progress: registrations cannot be open")
         if self.state == TournamentState.CHECKIN:
             raise CommandFailed("Check-in in progress: registrations are open")
-        # REGISTRATION, WAITING
+        # REGISTRATION, WAITING_FOR_*
         if self.flags & TournamentFlag.STAGGERED:
             raise CommandFailed("Tournament is staggered: cannot open registrations")
         self._reset_checkin()
@@ -497,15 +504,19 @@ class Tournament:
             raise CommandFailed("No check-in for staggered tournaments")
         if self.state == TournamentState.PLAYING:
             raise CommandFailed("The current round must be finished first")
-        if self.state != TournamentState.CHECKIN:
+        if self.state not in [
+            TournamentState.CHECKIN,
+            TournamentState.WAITING_FOR_START,
+        ]:
+            # REGISTRATION, WAITING_FOR_CHECKIN
             self._reset_checkin()
-        # REGISTRATION, WAITING and CHECKIN
+        # REGISTRATION, WAITING_FOR_* and CHECKIN
         self.state = TournamentState.CHECKIN
 
     def close_checkin(self) -> None:
         if self.state == TournamentState.CHECKIN:
-            self.state = TournamentState.WAITING
-        # REGISTRATION, WAITING and PLAYING stay as is
+            self.state = TournamentState.WAITING_FOR_START
+        # REGISTRATION, WAITING_FOR_START, WAITING_FOR_CHECKIN and PLAYING stay as is
 
     async def start_round(self, progression_callback: Callable) -> Round:
         if self.state == TournamentState.REGISTRATION:
@@ -569,6 +580,10 @@ class Tournament:
         """
         if self.flags & TournamentFlag.STAGGERED:
             return
+        if self.flags & TournamentFlag.REGISTER_BETWEEN:
+            raise CommandFailed(
+                "Staggered tournaments cannot allow registration between rounds"
+            )
         if self.rounds:
             raise CommandFailed(
                 "The tournament has already started: staggering is not possible anymore"
@@ -592,7 +607,7 @@ class Tournament:
             score,
         )
         self.flags |= TournamentFlag.STAGGERED
-        self.state = TournamentState.WAITING
+        self.state = TournamentState.WAITING_FOR_START
 
     def unmake_staggered(self) -> None:
         if not (self.flags & TournamentFlag.STAGGERED):
@@ -703,9 +718,10 @@ class Tournament:
             self._reset_checkin()
             self.standings()  # compute the winner
         else:
-            self.state = TournamentState.WAITING
+            self.state = TournamentState.WAITING_FOR_START
             if self.flags & TournamentFlag.CHECKIN_EACH_ROUND and not keep_checkin:
                 self._reset_checkin()
+                self.state = TournamentState.WAITING_FOR_CHECKIN
         return self.rounds[-1]
 
     def reset_round(self) -> Round:
@@ -719,7 +735,7 @@ class Tournament:
         round = self.rounds.pop(-1)
         self.current_round -= 1
         if round.finals:
-            self.state = TournamentState.WAITING
+            self.state = TournamentState.WAITING_FOR_START
         else:
             self.state = TournamentState.CHECKIN
         return round
@@ -865,7 +881,7 @@ class Tournament:
             raise CommandFailed("Round has been played")
         self.rounds.pop(-1)
         self.current_round -= 1
-        self.state = TournamentState.WAITING
+        self.state = TournamentState.WAITING_FOR_START
 
     def note(
         self,
@@ -939,13 +955,11 @@ class PlayerInfo:
                 self.status = PlayerStatus.MISSING_DECK
             elif tournament.state == TournamentState.REGISTRATION:
                 self.status = PlayerStatus.WAITING
-            elif tournament.state == TournamentState.WAITING:
-                if (
-                    tournament.current_round == 0
-                    or self.player.playing
-                    or tournament.flags & TournamentFlag.CHECKIN_EACH_ROUND
-                ):
-                    self.status = PlayerStatus.WAITING
+            elif tournament.state == TournamentState.WAITING_FOR_CHECKIN:
+                self.status = PlayerStatus.WAITING
+            elif tournament.state == TournamentState.WAITING_FOR_START:
+                if self.player.playing:
+                    self.status = PlayerStatus.CHECKED_IN
                 else:
                     self.status = PlayerStatus.CHECKED_OUT
             elif tournament.state == TournamentState.CHECKIN:

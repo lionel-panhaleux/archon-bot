@@ -11,6 +11,9 @@ import random
 from typing import Dict, Iterable, List, Optional, Union
 
 import hikari
+import hikari.channels
+import hikari.guilds
+import hikari.users
 from hikari.interactions.base_interactions import ResponseType
 from hikari.interactions.command_interactions import CommandInteraction
 from hikari.interactions.component_interactions import ComponentInteraction
@@ -40,9 +43,7 @@ def build_command_tree(rest_api):
     """Hikari commands to submit to the Discord server on boot."""
     commands = {}
     for name, klass in COMMANDS_TO_REGISTER.items():
-        command = rest_api.slash_command_builder(
-            name, klass.DESCRIPTION
-        ).set_default_permission(True)
+        command = rest_api.slash_command_builder(name, klass.DESCRIPTION)
         for option in klass.OPTIONS:
             command = command.add_option(option)
         commands[klass] = command
@@ -170,25 +171,38 @@ class InteractionContext:
 class DiscordExtra:
     def __init__(self, app, *args, **kwargs):
         self.prefix: str = kwargs.get("prefix", "")
-        self.roles: Dict[str, hikari.PartialRole] = {
-            k: hikari.PartialRole(app=app, **c)
-            for k, c in kwargs.get("roles", {}).items()
-        }
-        self.channels: Dict[hikari.PartialChannel] = {
-            t: {k: hikari.PartialChannel(app=app, **c) for k, c in chans.items()}
-            for t, chans in kwargs.get("channels", {}).items()
-        }
+        self.judges: List[hikari.Snowflake] = [
+            hikari.Snowflake(i) for i in kwargs.get("judges", [])
+        ]
+        self.spectators: List[hikari.Snowflake] = [
+            hikari.Snowflake(i) for i in kwargs.get("spectators", [])
+        ]
+        self.roles: Dict[str, hikari.guilds.PartialRole] = {}
+        for key, data in kwargs.get("roles", {}).items():
+            self.roles[key] = hikari.guilds.PartialRole(app=app, **data)
+        self.channels: Dict[str, Dict[str, hikari.channels.PartialChannel]] = {}
+        for type, dic in kwargs.get("channels", {}).items():
+            self.channels.setdefault(type, {})
+            for key, data in dic.items():
+                self.channels[type][key] = hikari.channels.PartialChannel(
+                    app=app, **data
+                )
 
     def to_json(self) -> dict:
         return {
             "prefix": self.prefix,
-            "roles": {s: {"id": r.id, "name": r.name} for s, r in self.roles.items()},
+            "judges": self.judges,
+            "spectators": self.spectators,
+            "roles": {
+                key: {"id": role.id, "name": role.name}
+                for key, role in self.roles.items()
+            },
             "channels": {
-                t: {
-                    key: {"id": c.id, "name": c.name, "type": c.type}
-                    for key, c in channels.items()
+                typ: {
+                    key: {"id": chan.id, "name": chan.name, "type": chan.type}
+                    for key, chan in channels.items()
                 }
-                for t, channels in self.channels.items()
+                for typ, channels in self.channels.items()
             },
         }
 
@@ -305,7 +319,8 @@ class BaseInteraction:
         self.interaction_context = interaction_context or InteractionContext()
         if self.REQUIRES_TOURNAMENT and not self.tournament:
             raise CommandFailed(
-                "No tournament running. Please use the `/open-tournament` command."
+                "No tournament running. Please use the "
+                f"{OpenTournament.mention()} command."
             )
         if self.ACCESS == CommandAccess.JUDGE and not self._is_judge():
             raise CommandFailed("Only a Judge can call this command")
@@ -315,7 +330,7 @@ class BaseInteraction:
         """Can be used to "chain" interactions.
 
         For example you might have commands A, B and C as different steps
-        for a given process, but a
+        for a given process, but want them to chain up in the same context
         """
         return cls(
             *args,
@@ -349,10 +364,7 @@ class BaseInteraction:
 
     def _is_judge_channel(self) -> bool:
         """Check wether the command was issued in the Judges private channel."""
-        return (
-            self.channel_id
-            == self.tournament.channels[tournament.Tournament.JUDGE_TEXT].id
-        )
+        return self.channel_id == self.discord.get_judge_text_channel().id
 
     def _player_display(self, player_id: tournament.PlayerID) -> str:
         """How to display a player."""
@@ -380,6 +392,7 @@ class BaseInteraction:
         expected = [(r, self.discord.role_name(r)) for r in Role]
         for table_num in range(1, self.tournament.tables_count() + 1):
             expected.append((table_num, self.discord.role_name(Role.PLAYER, table_num)))
+        logger.debug("expected roles: %s", expected)
         # delete spurious keys from registry
         to_delete = []
         expected_keys = {e[0] for e in expected}
@@ -387,6 +400,11 @@ class BaseInteraction:
             if key not in expected_keys:
                 to_delete.append(key)
         for key in to_delete:
+            logger.debug(
+                "deleting unexpected role from registry: %s: %s",
+                key,
+                self.discord.roles[key],
+            )
             del self.discord.roles[key]
         # compare what exists with what is registered
         existing = await self.bot.rest.fetch_roles(self.guild_id)
@@ -396,38 +414,97 @@ class BaseInteraction:
                 f"Roles with the {self.discord.prefix}- prefix exist: "
                 "remove them or use another tournament name."
             )
-        registered = {r for r in self.discord.roles.values()}
-        to_delete = [r for r in existing if r not in registered]
-        existing = {r for r in existing if r in registered}
-        # delete spurious from discord
-        await asyncio.gather(
-            *(self.bot.rest.delete_role(self.guild_id, r) for r in to_delete),
-            return_exceptions=silence_exceptions,
-        )
+        logger.debug("existing roles on discord: %s", existing)
+        registered = {r.id for r in self.discord.roles.values()}
+        logger.debug("registered roles: %s", self.discord.roles)
+        to_delete = [r.id for r in existing if r.id not in registered]
+        if to_delete:
+            logger.warning("deleting unexpected roles on discord: %s", to_delete)
+            # delete spurious from discord
+            await asyncio.gather(
+                *(self.bot.rest.delete_role(self.guild_id, r) for r in to_delete),
+                return_exceptions=silence_exceptions,
+            )
+        existing = {r.id for r in existing if r.id in registered}
         # delete spurious from registry
         to_delete = []
         for key, role in self.discord.roles.items():
-            if role not in existing:
+            if role.id not in existing:
                 to_delete.append(key)
         for key in to_delete:
+            logger.debug(
+                "deleting unavailable role from registry: %s: %s",
+                key,
+                self.discord.roles[key],
+            )
             del self.discord.roles[key]
+        # now discord and internal registry are aligned
         # create what is missing both on discord and in registry
         keys_to_create = []
         roles_to_create = []
         for key, name in expected:
             if key not in self.discord.roles:
+                logger.debug("creating role on discord: %s, %s", key, name)
                 keys_to_create.append(key)
                 roles_to_create.append(
                     self.bot.rest.create_role(
                         self.guild_id,
-                        name=self.discord.role_name(key),
+                        name=name,
                         mentionable=True,
                         reason=self.reason,
                     )
                 )
         roles = await asyncio.gather(*roles_to_create)
+        id_roles = []
         for key, role in zip(keys_to_create, roles):
+            logger.debug("creating role in registry: %s, %s", key, role)
             self.discord.roles[key] = role
+            # when we're recreating JUDGE / TABLE role,
+            # we must drop the matching channels
+            self.discord.channels.get("TEXT", {}).pop(key, None)
+            self.discord.channels.get("VOICE", {}).pop(key, None)
+            if key == Role.PLAYER:
+                id_roles.extend(
+                    (p.discord, role) for p in self.tournament.players.iter_players()
+                )
+            elif key == Role.JUDGE:
+                id_roles.extend((uid, role) for uid in self.discord.judges)
+                id_roles.append((self.bot.get_me().id, role))
+                logger.warning(
+                    "Recreating Judge role, bot might miss access to previous channels"
+                )
+            elif key == Role.SPECTATOR:
+                id_roles.extend((uid, role) for uid in self.discord.spectators)
+            elif isinstance(key, int):  # table role
+                if not self.tournament.rounds:
+                    logger.debug("Mising table role, but no round in progress")
+                    continue
+                round = self.tournament.rounds[-1]
+                table = round.seating[key - 1]
+                for number in table:
+                    if number not in self.tournament.players:
+                        continue
+                    discord_id = self.tournament.players[number].discord
+                    if not discord_id:
+                        continue
+                    id_roles.append((discord_id, role))
+            else:
+                raise RuntimeError(f"Unexpected role key {key}")
+
+        if id_roles:
+            logger.debug("assigning roles: %s", id_roles)
+            await asyncio.gather(
+                *[
+                    self.bot.rest.add_role_to_member(
+                        self.guild_id,
+                        snowflake,
+                        role,
+                        reason=self.reason,
+                    )
+                    for snowflake, role in id_roles
+                ]
+            )
+        logger.debug("roles aligned")
 
     async def _align_channels(
         self, raise_on_exists: bool = False, silence_exceptions: bool = False
@@ -438,6 +515,11 @@ class BaseInteraction:
                 ("TEXT", Role.JUDGE),
                 self.discord.channel_name(Role.JUDGE, hikari.ChannelType.GUILD_TEXT),
                 [
+                    hikari.PermissionOverwrite(
+                        id=self.bot.get_me().id,
+                        type=hikari.PermissionOverwriteType.MEMBER,
+                        allow=perm.ARCHON,
+                    ),
                     hikari.PermissionOverwrite(
                         id=self.guild_id,
                         type=hikari.PermissionOverwriteType.ROLE,
@@ -454,6 +536,11 @@ class BaseInteraction:
                 ("VOICE", Role.JUDGE),
                 self.discord.channel_name(Role.JUDGE, hikari.ChannelType.GUILD_VOICE),
                 [
+                    hikari.PermissionOverwrite(
+                        id=self.bot.get_me().id,
+                        type=hikari.PermissionOverwriteType.MEMBER,
+                        allow=perm.ARCHON,
+                    ),
                     hikari.PermissionOverwrite(
                         id=self.guild_id,
                         type=hikari.PermissionOverwriteType.ROLE,
@@ -475,6 +562,11 @@ class BaseInteraction:
                         Role.PLAYER, hikari.ChannelType.GUILD_TEXT, table_num
                     ),
                     [
+                        hikari.PermissionOverwrite(
+                            id=self.bot.get_me().id,
+                            type=hikari.PermissionOverwriteType.MEMBER,
+                            allow=perm.ARCHON,
+                        ),
                         hikari.PermissionOverwrite(
                             id=self.guild_id,
                             type=hikari.PermissionOverwriteType.ROLE,
@@ -506,6 +598,11 @@ class BaseInteraction:
                     ),
                     [
                         hikari.PermissionOverwrite(
+                            id=self.bot.get_me().id,
+                            type=hikari.PermissionOverwriteType.MEMBER,
+                            allow=perm.ARCHON,
+                        ),
+                        hikari.PermissionOverwrite(
                             id=self.guild_id,
                             type=hikari.PermissionOverwriteType.ROLE,
                             deny=perm.VOICE,
@@ -531,14 +628,21 @@ class BaseInteraction:
         # delete spurious keys from registry
         to_delete = []
         expected_keys = {e[0] for e in expected}
+        logger.debug("expected channels: %s", expected_keys)
         for key0, channels in self.discord.channels.items():
             for key1, channel in channels.items():
                 if (key0, key1) not in expected_keys:
                     to_delete.append((key0, key1))
         for key0, key1 in to_delete:
+            logger.debug(
+                "deleting unexpected channel from registry: %s: %s",
+                (key0, key1),
+                self.discord.channels[key0][key1],
+            )
             del self.discord.channels[key0][key1]
         # compare what exists with what is registered
         registered = self.discord.all_channels_ids()
+        logger.debug("registered channels: %s", self.discord.channels)
         existing = await self.bot.rest.fetch_guild_channels(self.guild_id)
         existing = [
             c
@@ -547,28 +651,49 @@ class BaseInteraction:
         ]
         if self.category_id:
             existing = [c for c in existing if c.parent_id == self.category_id]
-        existing = [c for c in existing if c.name.startswith(self.discord.prefix + "-")]
+        existing = [
+            c
+            for c in existing
+            if c.name.lower().startswith(self.discord.prefix.lower() + "-")
+        ]
         if existing and raise_on_exists:
             raise CommandFailed(
                 f"Channels with the {self.discord.prefix}- prefix exist: "
                 "remove them or use another tournament name."
             )
+        logger.debug("existing channels on discord: %s", existing)
         to_delete = [c for c in existing if c.id not in registered]
-        existing = {c for c in existing if c.id in registered}
-        # delete spurious from discord
-        await asyncio.gather(
-            *(self.bot.rest.delete_channel(c.id) for c in to_delete),
-            return_exceptions=silence_exceptions,
-        )
+        if to_delete:
+            logger.debug("deleting channels on discord: %s", to_delete)
+            # delete spurious from discord
+            try:
+                result = await asyncio.gather(
+                    *(self.bot.rest.delete_channel(c.id) for c in to_delete),
+                    return_exceptions=silence_exceptions,
+                )
+            except hikari.ClientHTTPResponseError as err:
+                raise CommandFailed(f"Failed to delete channel: {err}")
+            errors = [
+                r for r in result if isinstance(r, hikari.ClientHTTPResponseError)
+            ]
+            if errors:
+                logger.warning("errors closing channels: %s", errors)
+        existing = {c.id for c in existing if c.id in registered}
         # delete spurious from registry
         to_delete = []
         for key0, channels in self.discord.channels.items():
             for key1, channel in channels.items():
-                if channel not in existing:
+                if channel.id not in existing:
                     to_delete.append((key0, key1))
         for key0, key1 in to_delete:
+            logger.debug(
+                "deleting unavailable channel from registry: %s: %s",
+                (key0, key1),
+                self.discord.channels[key0][key1],
+            )
             del self.discord.channels[key0][key1]
 
+        # the registry now matches discord
         # create what is missing both on discord and in registry
         keys_to_create = []
         to_create = []
@@ -579,6 +704,7 @@ class BaseInteraction:
                 continue
             keys_to_create.append(key)
             if key[0] == "TEXT":
+                logger.debug("creating channel on discord: %s, %s", key, name)
                 to_create.append(
                     self.bot.rest.create_guild_text_channel(
                         self.guild_id,
@@ -589,6 +715,7 @@ class BaseInteraction:
                     )
                 )
             elif key[0] == "VOICE":
+                logger.debug("creating channel on discord: %s, %s", key, name)
                 to_create.append(
                     self.bot.rest.create_guild_voice_channel(
                         self.guild_id,
@@ -602,7 +729,9 @@ class BaseInteraction:
                 raise RuntimeError("Unexpected channel type")
         result = await asyncio.gather(*to_create)
         for key, res in zip(keys_to_create, result):
+            logger.debug("add channel to registry: %s, %s", key, res)
             self.discord.channels[key[0]][key[1]] = res
+        logger.debug("channels aligned")
 
     @property
     def reason(self) -> str:
@@ -617,6 +746,8 @@ class BaseInteraction:
 class BaseCommand(BaseInteraction, metaclass=MetaCommand):
     """Base class for all commands"""
 
+    #: Discord ID, set by the GatewayBot on connection
+    DISCORD_ID = None
     #: Command description. Override in children.
     DESCRIPTION = ""
     #: Define command options. Override in children as needed.
@@ -657,6 +788,13 @@ class BaseCommand(BaseInteraction, metaclass=MetaCommand):
             )
         await func(*args, **kwargs)
         self.interaction_context.has_response = True
+
+    @classmethod
+    def mention(cls, subcommand: str = None):
+        name = stringcase.spinalcase(cls.__name__)
+        if subcommand:
+            name += f" {subcommand}"
+        return f"</{name}:{cls.DISCORD_ID}>"
 
 
 class BaseComponent(BaseInteraction):
@@ -714,23 +852,23 @@ class OpenTournament(BaseCommand):
         if self.tournament:
             raise CommandFailed("A tournament is already open here")
         await self.deferred()
+        logger.debug("Creating tournament...")
         self.tournament = tournament.Tournament(name=name)
         self.discord.prefix = "".join([w[0] for w in name.split()][:3])
-
         if rounds:
             self.tournament.max_rounds = rounds
-        logger.debug("Creating roles...")
+        self.discord.judges.append(self.author.id)
         await self._align_roles(raise_on_exists=True)
-        logger.debug("Add roles and create channels...")
-        await asyncio.gather(
-            self.author.add_role(self.discord.roles[Role.JUDGE], reason=self.reason),
-            self.bot.rest.add_role_to_member(
-                self.guild_id,
-                self.bot.get_me(),
-                self.discord.roles[Role.JUDGE],
-                reason=self.reason,
-            ),
-        )
+        # logger.debug("Add roles and create channels...")
+        # await asyncio.gather(
+        #     self.author.add_role(self.discord.roles[Role.JUDGE], reason=self.reason),
+        #     self.bot.rest.add_role_to_member(
+        #         self.guild_id,
+        #         self.bot.get_me(),
+        #         self.discord.roles[Role.JUDGE],
+        #         reason=self.reason,
+        #     ),
+        # )
         await self._align_channels(raise_on_exists=True)
         # author is now a judge, he can configure (next step)
         self.author.role_ids.append(self.discord.roles[Role.JUDGE].id)
@@ -771,8 +909,10 @@ class ConfigureTournament(BaseCommand):
                 self.tournament.flags ^= tournament.TournamentFlag.DECKLIST_REQUIRED
             elif self.interaction.custom_id == "checkin-each-round":
                 self.tournament.flags ^= tournament.TournamentFlag.CHECKIN_EACH_ROUND
-            elif self.interaction.custom_id == "league":
-                self.tournament.flags ^= tournament.TournamentFlag.LEAGUE
+            elif self.interaction.custom_id == "multideck":
+                self.tournament.flags ^= tournament.TournamentFlag.MULTIDECK
+            elif self.interaction.custom_id == "register-between":
+                self.tournament.flags ^= tournament.TournamentFlag.REGISTER_BETWEEN
             elif self.interaction.custom_id == "staggered":
                 if self.tournament.flags & tournament.TournamentFlag.STAGGERED:
                     self.tournament.rounds = []
@@ -787,19 +927,21 @@ class ConfigureTournament(BaseCommand):
         checkin_each_round = (
             self.tournament.flags & tournament.TournamentFlag.CHECKIN_EACH_ROUND
         )
-        league = self.tournament.flags & tournament.TournamentFlag.LEAGUE
+        multideck = self.tournament.flags & tournament.TournamentFlag.MULTIDECK
+        between = self.tournament.flags & tournament.TournamentFlag.REGISTER_BETWEEN
         staggered = self.tournament.flags & tournament.TournamentFlag.STAGGERED
         if getattr(self.interaction, "custom_id", None) == "validate":
             components = []
             COMPONENTS.pop("vekn-required", None)
             COMPONENTS.pop("decklist-required", None)
             COMPONENTS.pop("checkin-each-round", None)
-            COMPONENTS.pop("league", None)
+            COMPONENTS.pop("multideck", None)
+            COMPONENTS.pop("register-between", None)
             COMPONENTS.pop("staggered", None)
             COMPONENTS.pop("validate", None)
         else:
             components = [
-                self.bot.rest.build_action_row()
+                self.bot.rest.build_message_action_row()
                 .add_button(
                     hikari.ButtonStyle.SECONDARY
                     if vekn_required
@@ -828,12 +970,21 @@ class ConfigureTournament(BaseCommand):
                 .add_to_container()
                 .add_button(
                     hikari.ButtonStyle.SECONDARY
-                    if league
+                    if multideck
                     else hikari.ButtonStyle.PRIMARY,
-                    "league",
+                    "multideck",
                 )
-                .set_label("Tournament" if league else "League")
+                .set_label("Single Deck" if multideck else "Multideck")
                 .add_to_container()
+                .add_button(
+                    hikari.ButtonStyle.SECONDARY
+                    if between
+                    else hikari.ButtonStyle.PRIMARY,
+                    "register-between",
+                )
+                .set_label("No late joiners" if between else "Join anytime")
+                .add_to_container(),
+                self.bot.rest.build_message_action_row()
                 .add_button(
                     hikari.ButtonStyle.SECONDARY
                     if staggered
@@ -841,8 +992,7 @@ class ConfigureTournament(BaseCommand):
                     "staggered",
                 )
                 .set_label("Normal" if staggered else "Staggered")
-                .add_to_container(),
-                self.bot.rest.build_action_row()
+                .add_to_container()
                 .add_button(hikari.ButtonStyle.SUCCESS, "validate")
                 .set_label("OK")
                 .add_to_container(),
@@ -850,7 +1000,8 @@ class ConfigureTournament(BaseCommand):
             COMPONENTS["vekn-required"] = ConfigureTournament
             COMPONENTS["decklist-required"] = ConfigureTournament
             COMPONENTS["checkin-each-round"] = ConfigureTournament
-            COMPONENTS["league"] = ConfigureTournament
+            COMPONENTS["multideck"] = ConfigureTournament
+            COMPONENTS["register-between"] = ConfigureTournament
             COMPONENTS["staggered"] = ConfigureTournament
             COMPONENTS["validate"] = ConfigureTournament
 
@@ -860,18 +1011,25 @@ class ConfigureTournament(BaseCommand):
                 f"- VEKN ID# is {'' if vekn_required else 'not '}required\n"
                 f"- Decklist is {'' if decklist_required else 'not '}required\n"
                 f"- Check-in {'each round' if checkin_each_round else 'once'}\n"
+                f"- {'Different decks can' if multideck else 'A single deck must'} "
+                "be used throughout the tournament\n"
+                f"- Players {'can still' if between else 'cannot'} join "
+                "after first round\n"
                 + (
-                    "- League format (multi-deck, join while in progress)\n"
-                    if league
-                    else "- Standard tournament\n"
+                    " - Tournament is staggered\n"
+                    if staggered
+                    else (
+                        "\nIf you have 6, 7 or 11 players, you can configure a "
+                        '"staggered" tournament, where each player sits a round out.'
+                    )
                 )
-                + ("- Tournament is staggered\n" if staggered else "")
             ),
         )
         if not components:
             embed.description += (
                 "\nRegistrations are now open.\n"
-                "Use the `/appoint` command to appoint judges, bots and spectators.\n"
+                f"Use the {Appoint.mention()} command to appoint judges, "
+                "bots and spectators.\n"
             )
         # different API response when a component is clicked,
         if getattr(self.interaction, "custom_id", None):
@@ -902,7 +1060,7 @@ class CloseTournament(BaseCommand):
         if not self.tournament:
             raise CommandFailed("No tournament going on here")
         confirmation = (
-            self.bot.rest.build_action_row()
+            self.bot.rest.build_message_action_row()
             .add_button(hikari.ButtonStyle.DANGER, "confirm-close")
             .set_label("Close tournament")
             .add_to_container()
@@ -919,7 +1077,7 @@ class CloseTournament(BaseCommand):
                 description=(
                     "This will definitely close all tournament channels.\n"
                     "Make sure you downloaded the tournament reports "
-                    "(`/download-reports`)"
+                    f"({DownloadReports.mention()})"
                 ),
             ),
             components=[confirmation],
@@ -950,7 +1108,7 @@ class CloseTournament(BaseCommand):
                 await asyncio.gather(
                     *(
                         self.bot.rest.delete_role(self.guild_id, role)
-                        for role in self.tournament.roles.values()
+                        for role in self.discord.roles.values()
                     ),
                     return_exceptions=True,
                 )
@@ -1046,7 +1204,7 @@ class Register(BaseCommand):
                 embed=hikari.Embed(
                     title="Decklist required",
                     description=(
-                        "You need to provide a decklist with the `/register` command. "
+                        f"You need to provide a decklist with {Register.mention()}. "
                         "You do not need to provide the other parameters (eg. `vekn`) "
                         "if you have done so already: only your decklist will update."
                     ),
@@ -1075,7 +1233,7 @@ class Register(BaseCommand):
                 "\nPlease note you will need to confirm your presence by "
                 "using the `checkin` command before the next round begins."
             )
-        description += "\n\nUse the `/status` command anytime to check your status."
+        description += f"\n\nUse {Status.mention()} anytime to check your status."
         self.update()
         await self.create_or_edit_response(
             embed=hikari.Embed(
@@ -1168,13 +1326,13 @@ class RegisterPlayer(BaseCommand):
             if self.tournament.state == tournament.TournamentState.PLAYING:
                 description += (
                     "\nYou can add the player to the current round if you find a spot "
-                    "for them on a table that has not yet begun to play by using the "
-                    "`/round add` command"
+                    "for them on a table that has not yet begun to play by using "
+                    f"{Round.mention('add')}."
                 )
             else:
                 description += (
-                    "\nThe user will need to confirm their presence "
-                    "by using the `checkin` command before next round begins.\n"
+                    "\nThe user will need to confirm their presence with the "
+                    f"{CheckIn.mention()} command before next round begins.\n"
                 )
         await self.create_or_edit_response(
             embed=hikari.Embed(
@@ -1320,7 +1478,7 @@ class Appoint(BaseCommand):
     Judges might not have role management permissions on a server.
     """
 
-    UPDATE = db.UpdateLevel.READ_ONLY
+    UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Appoint judges, bots and spectators"
     OPTIONS = [
@@ -1350,6 +1508,7 @@ class Appoint(BaseCommand):
     ) -> None:
         await self.deferred(flags=hikari.MessageFlag.EPHEMERAL)
         if role in ["JUDGE", "BOT"]:
+            self.discord.judges.append(user)
             await self.bot.rest.add_role_to_member(
                 self.guild_id,
                 user,
@@ -1357,6 +1516,7 @@ class Appoint(BaseCommand):
                 reason=self.reason,
             )
         else:
+            self.discord.spectators.append(user)
             await self.bot.rest.add_role_to_member(
                 self.guild_id,
                 user,
@@ -1477,12 +1637,8 @@ class Round(BaseCommand):
     async def _display_seating(self, table_num) -> None:
         """Display the seating in the table channel."""
         table = self.tournament.rounds[-1].seating[table_num - 1]
-        channel_id = self.tournament.channels[
-            f"TEXT-{self.tournament.table_name(table_num)}".lower()
-        ]
-        voice_channel = self.tournament.channels.get(
-            f"VOICE-{self.tournament.table_name(table_num)}".lower(), None
-        )
+        channel_id = self.discord.get_table_text_channel(table_num).id
+        voice_channel = self.discord.get_table_voice_channel(table_num).id
         embed = hikari.Embed(
             title=f"Table {table_num} seating",
             description="\n".join(
@@ -1515,23 +1671,25 @@ class Round(BaseCommand):
             )
         )
         await self._align_roles()
-        player_roles = []
-        for role, table in zip(self.discord.table_roles(), round.seating.iter_tables()):
-            for number in table:
-                if number not in self.tournament.players:
-                    continue
-                discord_id = self.tournament.players[number].discord
-                if not discord_id:
-                    continue
-                player_roles.append([discord_id, role])
-        await asyncio.gather(
-            *(
-                self.bot.rest.add_role_to_member(
-                    guild=self.guild_id, user=user, role=role
-                )
-                for user, role in player_roles
-            )
-        )
+        # player_roles = []
+        # for role, table in zip(
+        #       self.discord.table_roles(), round.seating.iter_tables()
+        #   ):
+        #     for number in table:
+        #         if number not in self.tournament.players:
+        #             continue
+        #         discord_id = self.tournament.players[number].discord
+        #         if not discord_id:
+        #             continue
+        #         player_roles.append([discord_id, role])
+        # await asyncio.gather(
+        #     *(
+        #         self.bot.rest.add_role_to_member(
+        #             guild=self.guild_id, user=user, role=role
+        #         )
+        #         for user, role in player_roles
+        #     )
+        # )
         await self._align_channels()
         await asyncio.gather(
             *(self._display_seating(i + 1) for i in range(round.seating.tables_count()))
@@ -1633,25 +1791,25 @@ class Finals(BaseCommand):
         )
         await self._align_roles()
         await self._align_channels()
-        finalists = []
-        for number in round.seating[0]:
-            if number not in self.tournament.players:
-                continue
-            discord_id = self.tournament.players[number].discord
-            if not discord_id:
-                continue
-            finalists.append(discord_id)
-        await asyncio.gather(
-            *(
-                self.bot.rest.add_role_to_member(
-                    guild=self.guild_id,
-                    user=discord_id,
-                    role=self.discord.roles[1],
-                    reason=self.reason,
-                )
-                for discord_id in finalists
-            )
-        )
+        # finalists = []
+        # for number in round.seating[0]:
+        #     if number not in self.tournament.players:
+        #         continue
+        #     discord_id = self.tournament.players[number].discord
+        #     if not discord_id:
+        #         continue
+        #     finalists.append(discord_id)
+        # await asyncio.gather(
+        #     *(
+        #         self.bot.rest.add_role_to_member(
+        #             guild=self.guild_id,
+        #             user=discord_id,
+        #             role=self.discord.roles[1],
+        #             reason=self.reason,
+        #         )
+        #         for discord_id in finalists
+        #     )
+        # )
         self.update()
         seeding_embed = hikari.Embed(
             title="Finals seeding",
@@ -1929,7 +2087,7 @@ class Note(BaseCommand):
                 ),
             )
 
-        confirmation = self.bot.rest.build_action_row()
+        confirmation = self.bot.rest.build_message_action_row()
         if previous_notes:
             confirmation = (
                 confirmation.add_button(
@@ -2028,13 +2186,7 @@ class Note(BaseCommand):
                 table_text = None
                 info = self.tournament.player_info(self.vekn)
                 if info.table:
-                    if self.tournament.rounds[-1].finals:
-                        table_name = f"{self.tournament.prefix}Finals"
-                    else:
-                        table_name = self.tournament.table_name(info.table)
-                    table_text = self.tournament.channels.get(
-                        f"text-{table_name}".lower(), None
-                    )
+                    table_text = self.discord.get_table_text_channel(info.table)
                 coroutines = [
                     self.create_or_edit_response(
                         embed=embed,
@@ -2074,7 +2226,10 @@ class Announce(BaseCommand):
         await self.deferred()
         judges_channel = self.discord.channels["TEXT"][Role.JUDGE]
         current_round = self.tournament.current_round
-        if self.tournament.state == tournament.TournamentState.CHECKIN:
+        if self.tournament.state in [
+            tournament.TournamentState.CHECKIN,
+            tournament.TournamentState.WAITING_FOR_START,
+        ]:
             current_round += 1
         if self.tournament.rounds and self.tournament.rounds[-1].finals:
             current_round = "Finals"
@@ -2085,7 +2240,7 @@ class Announce(BaseCommand):
                 title=f"{self.tournament.name} — Registrations open",
                 description=(
                     f"{self.tournament.players.count} players registered\n"
-                    "**Use the `/register` command to register.**"
+                    f"**Use the {Register.mention()} command to register.**"
                 ),
             )
             if self.tournament.flags & tournament.TournamentFlag.VEKN_REQUIRED:
@@ -2105,7 +2260,8 @@ class Announce(BaseCommand):
                         "A decklist is required for this tournament. "
                         "You can register without one, but you need to provide "
                         "it before the first round. "
-                        "Use the `/register` command again to add your decklist."
+                        f"Use the {Register.mention()} command again "
+                        "to add your decklist."
                     ),
                 )
             if self.tournament.flags & tournament.TournamentFlag.CHECKIN_EACH_ROUND:
@@ -2116,28 +2272,40 @@ class Announce(BaseCommand):
                 name="Check-in",
                 value=(
                     "Once registered, you will need to check in before "
-                    f"{checkin_time} using the `/check-in` command."
+                    f"{checkin_time} using the {CheckIn.mention()} command."
                 ),
             )
             judges_embed = hikari.Embed(
                 title=embed.title,
                 description=(
-                    "- `/players-list` to check progression\n"
-                    "- `/register-player` to register players who struggles\n"
-                    "- `/drop-player` to remove a player\n"
-                    "- `/open-check-in` to allow check-in for the first round. "
+                    f"- {PlayersList.mention()} to check progression\n"
+                    "    ✅ Checked in and ready to play\n"
+                    "    ▶️ Playing\n"
+                    "    ⌛️ Waiting for check-in\n"
+                    "    📄 Missing decklist\n"
+                    "    ❌ Checked out (dropped)\n"
+                    "    ⛔️ Disqualified\n"
+                    f"- {RegisterPlayer.mention()} to register players yourself\n"
+                    f"- {DropPlayer.mention()} to remove a player\n"
+                    f"- {OpenCheckIn.mention()} to allow check-in for the first round. "
                     "Registration will still be possible once you open check-in.\n"
+                    "\n"
+                    "**Important**\n"
+                    "If you're hosting an offline event or if the first round is about "
+                    f"to start, you should use {OpenCheckIn.mention()} now."
+                    "This way, a registration will mark the player as checked in and "
+                    "ready to play"
                 ),
             )
             judges_embed.add_field(
                 name="Player Registration",
                 value=(
-                    "When you use the `/register-player` command, you need to provide "
-                    "either the user or their VEKN ID#. With a *single command*, "
-                    "you can provide both, and also the decklist. If the player is "
-                    "listed already, the command will update the information "
-                    "(VEKN ID# and/or deck). If not, the command will register them "
-                    "as a new player."
+                    f"When you use the {RegisterPlayer.mention()} command, "
+                    "you need to provide either the user or their VEKN ID#. "
+                    "With a *single command*, you can provide both, "
+                    "and also the decklist. If the player is listed already, "
+                    "the command will update the information (VEKN ID# and/or deck). "
+                    "If not, the command will register them as a new player."
                 ),
             )
             judges_embed.add_field(
@@ -2145,9 +2313,10 @@ class Announce(BaseCommand):
                 value=(
                     "If the tournament requires a VEKN ID# and the player does not "
                     "have one yet, they cannot register. As judge, you can register "
-                    "them with the `/register-player` command. If you do not provide "
-                    "a VEKN ID#, the bot will issue a temporary ID to use as VEKN ID#, "
-                    "a short number prefixed with `P-`."
+                    f"them with the {RegisterPlayer.mention()} command. "
+                    "If you do not provide a VEKN ID#, the bot will issue "
+                    "a temporary ID to use as VEKN ID#, a short number prefixed with "
+                    "`P-`."
                 ),
             )
             await asyncio.gather(
@@ -2163,28 +2332,29 @@ class Announce(BaseCommand):
                 title=(f"{self.tournament.name} — CHECK-IN — {current_round}"),
                 description=(
                     "⚠️ **Check-in is required to play** ⚠️\n"
-                    "Please confirm your participation with the `/check-in` command.\n"
-                    "You can use the `/status` command to verify your status."
+                    f"Please confirm your participation with the {CheckIn.mention()} "
+                    "command.\n"
+                    f"You can use {Status.mention()} to verify your status."
                 ),
             )
             if (
                 self.tournament.current_round == 0
-                or self.tournament.flags & tournament.TournamentFlag.LEAGUE
+                or self.tournament.flags & tournament.TournamentFlag.REGISTER_BETWEEN
             ):
                 embed.add_field(
                     name="Registration",
                     value=(
                         "If you are not registered yet, you can still do so "
-                        "by using the `/register` command. You will be checked "
-                        "in automatically."
+                        f"by using the {Register.mention()} command. "
+                        "You will be checked in automatically."
                     ),
                 )
             judges_embed = hikari.Embed(
                 title=embed.title,
                 description=(
-                    "- `/players-list` to check progression\n"
-                    "- `/register-player` to check players who struggle in\n"
-                    "- `/round start` when you're ready\n"
+                    f"- {PlayersList.mention()} to check progression\n"
+                    f"- {RegisterPlayer.mention()} to register & check players in\n"
+                    f"- {Round.mention('start')} when you're ready\n"
                 ),
             )
             await asyncio.gather(
@@ -2197,29 +2367,72 @@ class Announce(BaseCommand):
                     self.bot.rest.create_message(judges_channel, embed=judges_embed),
                 )
             )
-
-        elif self.tournament.state == tournament.TournamentState.WAITING:
+        elif self.tournament.state == tournament.TournamentState.WAITING_FOR_CHECKIN:
             embed = hikari.Embed(
                 title=(f"{self.tournament.name} — {current_round} finished"),
                 description=(
                     "Waiting for next round to begin.\n"
-                    "You can use the `/status` command to verify your status."
+                    f"You can use the {Status.mention()} command to verify your status."
                 ),
             )
-            if self.tournament.flags & tournament.TournamentFlag.CHECKIN_EACH_ROUND:
+            embed.add_field(
+                name="Check-in required",
+                value=(
+                    "Players will need to **check in again** for next round "
+                    "(unless it is the finals)."
+                ),
+            )
+            if self.tournament.flags & tournament.TournamentFlag.REGISTER_BETWEEN:
                 embed.add_field(
-                    name="Check-in required",
+                    name="Registration",
                     value=(
-                        "Players will need to **check in again** for next round "
-                        "(unless it is the finals)."
+                        "If you are not registered yet, you can do so "
+                        f"by using the {Register.mention()}  command. "
+                        "You will also need to check in for the next round "
+                        "before it begins, once the check-in is open."
                     ),
                 )
             judges_embed = hikari.Embed(
                 title=embed.title,
                 description=(
-                    "- `/open-check-in` to open the check-in for next round\n"
-                    "- `/standings` to get current standings\n"
-                    "- `/finals` to start the finals\n"
+                    f"- {OpenCheckIn.mention()}  to open the check-in for next round\n"
+                    f"- {Standings.mention()}  to get current standings\n"
+                    f"- {PlayersList.mention()}  to check the list of players\n"
+                    f"- {DropPlayer.mention()}  to remove a player\n"
+                    f"- {Finals.mention()}  to start the finals\n"
+                ),
+            )
+            await asyncio.gather(
+                *(
+                    self.create_or_edit_response(embed=embed),
+                    self.bot.rest.create_message(judges_channel, embed=judges_embed),
+                )
+            )
+        elif self.tournament.state == tournament.TournamentState.WAITING_FOR_START:
+            embed = hikari.Embed(
+                title=(f"{self.tournament.name} — {current_round} starting soon"),
+                description=(
+                    "Waiting for the round to begin.\n"
+                    f"You can use the {Status.mention()} command to verify your status."
+                ),
+            )
+            if self.tournament.flags & tournament.TournamentFlag.REGISTER_BETWEEN:
+                embed.add_field(
+                    name="Registration",
+                    value=(
+                        "If you are not registered yet, you can still do so "
+                        f"by using the {Register.mention()}  command. "
+                        "You will be checked in automatically."
+                    ),
+                )
+            judges_embed = hikari.Embed(
+                title=embed.title,
+                description=(
+                    f"- {Standings.mention()}  to get current standings\n"
+                    f"- {Round.mention('start')}  to start the next round\n"
+                    f"- {PlayersList.mention()}  to check the list of players\n"
+                    f"- {DropPlayer.mention()}  to remove a player\n"
+                    f"- {Finals.mention()}  to start the finals\n"
                 ),
             )
             await asyncio.gather(
@@ -2245,8 +2458,8 @@ class Announce(BaseCommand):
             judges_embed = hikari.Embed(
                 title=embed.title,
                 description=(
-                    "- `/download-reports` to get the tournament report files\n"
-                    "- `/close-tournament` to close this tournament\n"
+                    f"- {DownloadReports.mention()} to get the report files\n"
+                    f"- {CloseTournament.mention()} to close this tournament\n"
                 ),
             )
             await asyncio.gather(
@@ -2260,13 +2473,13 @@ class Announce(BaseCommand):
                 title=(f"{self.tournament.name} — {current_round} in progress"),
                 description=(
                     "Join your assigned table channels and enjoy your game.\n"
-                    "Use the `/status` command to **find your table** if you're lost."
+                    f"Use the {Status.mention()} command to **find your table**."
                 ),
             )
             embed.add_field(
                 name="Report your results",
                 value=(
-                    "Use the `/report` command to report "
+                    f"Use the {Report.mention()}  command to report "
                     "your Victory Points.\n"
                     "No need to report scores of zero."
                 ),
@@ -2275,29 +2488,31 @@ class Announce(BaseCommand):
                 judges_embed = hikari.Embed(
                     title=embed.title,
                     description=(
-                        "- `/round reset` to cancel (the toss stays the same)\n"
-                        "- `/fix-report` to register the score\n"
-                        "- `/round finish` when all is good\n"
+                        f"- {Round.mention('reset')} to cancel (the toss stays)\n"
+                        f"- {FixReport.mention()}  to register the score\n"
+                        f"- {Round.mention('finish')}  when all is good\n"
                         "\n"
                         "Once this is done, you can get the reports with "
-                        "`/download-reports` and close the tournament with "
-                        "`/close-tournament`."
+                        f"{DownloadReports.mention()}  and close the tournament with "
+                        f"{CloseTournament.mention()} ."
                     ),
                 )
             else:
                 judges_embed = hikari.Embed(
                     title=embed.title,
                     description=(
-                        "- `/round remove` to remove a player before the game begins\n"
-                        "- `/round reset` to cancel the round and seating\n"
-                        "- `/results` to see the results\n"
-                        "- `/fix-report` to correct them if needed\n"
-                        "- `/validate-score` to confirm odd situations\n"
-                        "- `/round finish` when all is good\n"
+                        f"- {Round.mention('add')} to add a player before game\n"
+                        f"- {Round.mention('remove')} to remove a player before game \n"
+                        f"- {Round.mention('reset')} to cancel the round and seating\n"
+                        f"- {Note.mention()} to deliver cautions and warnings\n"
+                        f"- {Results.mention()} to see the results\n"
+                        f"- {FixReport.mention()} to correct them if needed\n"
+                        f"- {ValidateScore.mention()} to force odd scores validation\n"
+                        f"- {Round.mention('finish')} when all is good\n"
                         "\n"
-                        "You can still register a late arrival with `/register-player` "
-                        "then add them to a 4-players table that has not yet started "
-                        "(if any) with `/round add`."
+                        f"You can still register a late arrival with "
+                        "{RegisterPlayer.mention()} then add them to a 4-players table "
+                        f"that has not started (if any) with {Round.mention('add')}."
                     ),
                 )
             await asyncio.gather(
@@ -2325,15 +2540,17 @@ class Status(BaseCommand):
         )
         if self.author.id not in self.tournament.players:
             if self.tournament.rounds and not (
-                self.tournament.flags & tournament.TournamentFlag.LEAGUE
+                self.tournament.flags & tournament.TournamentFlag.REGISTER_BETWEEN
             ):
                 embed.description = "Tournament in progress. You're not participating."
-            elif self.tournament.state == tournament.TournamentState.WAITING:
+            elif (
+                self.tournament.state == tournament.TournamentState.WAITING_FOR_CHECKIN
+            ):
                 embed.description = "Waiting for registrations to open."
             else:
                 embed.description = (
                     f"{self.tournament.players.count} players registered.\n"
-                    "Register using the `/register` command."
+                    f"Register using the {Register.mention()} command."
                 )
                 if self.tournament.flags & tournament.TournamentFlag.VEKN_REQUIRED:
                     embed.description += (
@@ -2380,7 +2597,9 @@ class Status(BaseCommand):
                     )
                 if voice_channel:
                     embed.description += f"\n**Join vocal:** <#{voice_channel}>"
-                embed.description += "\nUse the `/report` command to register your VPs"
+                embed.description += (
+                    f"\nUse the {Report.mention()} command to register your VPs"
+                )
             elif info.status == tournament.PlayerStatus.CHECKED_IN:
                 embed.description = (
                     "You are ready to play. You will be assigned a table and a seat "
@@ -2389,12 +2608,14 @@ class Status(BaseCommand):
             elif info.status == tournament.PlayerStatus.CHECKIN_REQUIRED:
                 embed.description = (
                     "⚠️ **You need to check-in** ⚠️\n"
-                    "Use the `/check-in` command to check in for the next round."
+                    f"Use the {CheckIn.mention()} command to check in "
+                    "for the upcoming round."
                 )
             elif info.status == tournament.PlayerStatus.MISSING_DECK:
                 embed.description = (
                     "⚠️ **You need to provide your decklist** ⚠️\n"
-                    "Please use the `/register` command to provide your decklist.\n"
+                    f"Please use the {Register.mention()} command "
+                    "to provide your decklist.\n"
                     f"You need to provide a [VDB]({VDB_URL}) "
                     f"or [Amaranth]({AMARANTH_URL}) link (URL)."
                 )
@@ -2406,7 +2627,7 @@ class Status(BaseCommand):
                     if info.player.deck:
                         embed.description += (
                             "\nYour decklist has been saved. You can use the "
-                            "`/register` command again to update it."
+                            f"{Register.mention()} command again to update it."
                         )
                 elif self.tournament.rounds[-1].finals:
                     embed.description = (
@@ -2548,7 +2769,7 @@ class PlayerInfo(BaseCommand):
         if info.player.playing:
             if self.tournament.state in [
                 tournament.TournamentState.CHECKIN,
-                tournament.TournamentState.WAITING,
+                tournament.TournamentState.WAITING_FOR_START,
             ]:
                 embed.add_field(
                     name="Checked-in",
@@ -2907,22 +3128,22 @@ class Raffle(BaseCommand):
         await self.create_or_edit_response(embed=embed)
 
 
-class ResetChannels(BaseCommand):
+class ResetChannelsAndRoles(BaseCommand):
     """For dev purposes and in case of bug: realign the channels.
 
     # TODO: this is clumsy - improve channel management overall
     """
 
     UPDATE = db.UpdateLevel.WRITE
-    ACCESS = CommandAccess.JUDGE
-    DESCRIPTION = "JUDGE: Reset tournament channels"
+    ACCESS = CommandAccess.ADMIN
+    DESCRIPTION = "ADMIN: Reset tournament channels and roles"
     OPTIONS = []
 
     async def __call__(self) -> None:
         """Realign channels on what we have registered."""
         await self.deferred()
-        await self._align_roles
-        await self._align_channels
+        await self._align_roles()
+        await self._align_channels()
         self.update()
         embed = hikari.Embed(
             title="Channels reset",
@@ -2931,6 +3152,8 @@ class ResetChannels(BaseCommand):
         await self.create_or_edit_response(embed=embed)
 
 
+# TODO Remove TEXT channels, use voice channels chat instead
+# TODO Fix player discord mentions during registration (disconnected players)
 # TODO Include GW from current round in status when game is finished and fully reported
 # TODO Display table score on table channel
 # TODO Upload decklist as txt file attachment

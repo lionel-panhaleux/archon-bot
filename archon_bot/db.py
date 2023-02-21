@@ -24,6 +24,8 @@ LOCKS = collections.defaultdict(asyncio.Lock)
 LONG = collections.defaultdict(bool)
 #: Cache for read operations
 TOURNAMENTS = collections.defaultdict(dict)
+#: Cache for read operations
+GUILDS = collections.defaultdict(dict)
 
 
 class UpdateLevel(enum.IntEnum):
@@ -85,6 +87,9 @@ async def init():
             "guild TEXT, "
             "category TEXT, "
             "data json)"
+        )
+        cursor.execute(
+            "CREATE TABLE IF NOT EXISTS discord_config(" "guild TEXT, " "data json)"
         )
 
 
@@ -175,3 +180,39 @@ def close_tournament(conn, guild_id, category_id):
         "WHERE active=TRUE AND guild=%s AND category=%s",
         [str(guild_id), str(category_id) if category_id else ""],
     )
+
+
+def upsert_guild_config(conn, guild_id, config_data):
+    cursor = conn.cursor()
+    logger.debug("New guild config %s: %s", guild_id, config_data)
+    cursor.execute(
+        "INSERT INTO discord_config (guild, data) " "VALUES (%s, %s)",
+        [
+            str(guild_id),
+            config_data,
+        ],
+    )
+    GUILDS.pop(guild_id, None)
+
+
+def guild_config(conn, guild_id):
+    """Get the guild config data, use the cache if available."""
+    # do not consume a DB connection if data is in the cache
+    if guild_id in GUILDS:
+        return None, GUILDS[guild_id]
+    else:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT data from discord_config " "WHERE guild=%s",
+            [str(guild_id)],
+        )
+        guild_config = cursor.fetchone()
+        if guild_config:
+            # beware of concurrency with locked write operations here
+            # it is OK to set the cache if it is empty, but do not overwrite
+            # a locked write cache update with the return of a previous read
+            if guild_id not in GUILDS:
+                GUILDS[guild_id] = guild_config[0]
+            return conn, guild_config[0]
+        else:
+            return conn, None

@@ -26,7 +26,11 @@ class CommandFailed(Exception):
 
 
 class ErrorDecklistRequired(CommandFailed):
-    """Specific error for missing decklist, to be able to provide a convenient clue"""
+    """Missing decklist"""
+
+
+class ErrorMaxRoundReached(CommandFailed):
+    """The player has reached the maximum amount of rounds allowed, no check in"""
 
 
 class TournamentFlag(enum.IntFlag):
@@ -329,7 +333,9 @@ class Tournament:
                     "Only a judge can register a player without VEKN ID#"
                 )
             else:
-                vekn = f"P-{self.players.count + 1}"
+                # use next number, not count
+                # droping before first removes a player from the list and could collide
+                vekn = f"P-{self.players.next_number}"
                 temp_vekn = True
         # make sure not to overwrite a previous registration with the same VEKN ID
         # only a judge can override a previous vekn use
@@ -416,6 +422,9 @@ class Tournament:
                 playing=playing,
             )
             self.players.add(player)
+        # check for max_rounds
+        if PlayerInfo(player.vekn, self).rounds >= self.max_rounds:
+            raise ErrorMaxRoundReached()
         # decklist requirement on check-in
         if (
             player.playing
@@ -639,6 +648,8 @@ class Tournament:
         table = self.rounds[-1].seating[table_num - 1]
         if len(table) > 4:
             raise CommandFailed("Table has 5 players already")
+        if PlayerInfo(player.vekn, self).rounds >= self.max_rounds:
+            raise ErrorMaxRoundReached()
         table.append(player.number)
         player.playing = True
         # if this is not first round, optimise the score
@@ -682,8 +693,8 @@ class Tournament:
     def _optimise_table(self, table_num: int):
         """For round add/remove: optimise the modified table seating score."""
         max_number = max(
-            p.number
-            for p in itertools.chain.from_iterable(
+            player_num
+            for player_num in itertools.chain.from_iterable(
                 r.seating.iter_players() for r in self.rounds
             )
         )
@@ -722,6 +733,10 @@ class Tournament:
             if self.flags & TournamentFlag.CHECKIN_EACH_ROUND and not keep_checkin:
                 self._reset_checkin()
                 self.state = TournamentState.WAITING_FOR_CHECKIN
+            else:
+                for player in self.players.iter_players():
+                    if PlayerInfo(player.vekn, self).rounds >= self.max_rounds:
+                        player.playing = False
         return self.rounds[-1]
 
     def reset_round(self) -> Round:
@@ -769,8 +784,6 @@ class Tournament:
 
         round_number defaults to the current round.
         """
-        if self.state != TournamentState.PLAYING:
-            raise CommandFailed("Scores can only be reported when a round is ongoing")
         round_number = self._check_round_number(round_number)
         try:
             player = self.players[player_id]
@@ -832,9 +845,8 @@ class Tournament:
                     winner == a[0],
                     a[1],
                     # put the seed here, so if you win the toss once, you keep your win
-                    # 0 would go before negative seed numbers, math.nan always goes last
-                    # BUG: this does not seem to work, check it
-                    -self.players[a[0]].seed or math.nan,
+                    # 0 would go before negative seed numbers, math.inf always goes last
+                    -self.players[a[0]].seed or -math.inf,
                     # toss
                     random.random() if toss else a[0],
                 ),
@@ -925,10 +937,10 @@ class Tournament:
             level=NoteLevel.OVERRIDE, judge=judge, text=comment
         )
 
-    def player_info(self, vekn_or_discord: PlayerID):
+    def player_info(self, vekn_or_discord: PlayerID, current_score: bool = False):
         """Returns a player information (PlayerInfo instance)"""
         vekn = self._check_player_id(vekn_or_discord)
-        return PlayerInfo(vekn, self)
+        return PlayerInfo(vekn, self, current_score)
 
 
 class PlayerInfo:
@@ -941,7 +953,7 @@ class PlayerInfo:
     drop = None
     notes = None
 
-    def __init__(self, vekn: str, tournament: Tournament):
+    def __init__(self, vekn: str, tournament: Tournament, current: bool = False):
         self.player = tournament.players[vekn]
         self.drop = tournament.dropped.get(vekn, None)
         self.notes = tournament.notes.get(vekn, [])
@@ -990,7 +1002,9 @@ class PlayerInfo:
                         if player == self.player.number:
                             self.table = table
                             self.position = position
-                            break
+                            # if not specified, do not include current round in score
+                            if not current:
+                                break
             self.score += round.results.get(self.player.number, Score())
 
     def __str__(self):

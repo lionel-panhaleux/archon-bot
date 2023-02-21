@@ -107,6 +107,7 @@ class Role(str, enum.Enum):
     PLAYER = "Player"
     SPECTATOR = "Spectator"
     JUDGE = "Judge"
+    ROOT_JUDGE = "Root Judge"
 
 
 def _split_text(s, limit):
@@ -207,6 +208,8 @@ class DiscordExtra:
         }
 
     def role_name(self, role: Role, table_num: Optional[int] = None) -> str:
+        if role == Role.ROOT_JUDGE:
+            return "Archon-Judge"
         if role == Role.JUDGE:
             return f"{self.prefix}-Judge"
         elif role == Role.PLAYER:
@@ -262,18 +265,18 @@ class DiscordExtra:
         self.channels["VOICE"][Role.JUDGE] = channel
 
     def get_table_text_channel(self, table_num: int):
-        return self.channels["TEXT"][table_num]
+        return self.channels["TEXT"][str(table_num)]
 
     def set_table_text_channel(self, table_num: int, channel: hikari.PartialChannel):
         self.channels.setdefault("TEXT", {})
-        self.channels["TEXT"][table_num] = channel
+        self.channels["TEXT"][str(table_num)] = channel
 
     def get_table_voice_channel(self, table_num: int):
-        return self.channels["VOICE"][table_num]
+        return self.channels["VOICE"][str(table_num)]
 
     def set_table_voice_channel(self, table_num: int, channel: hikari.PartialChannel):
         self.channels.setdefault("VOICE", {})
-        self.channels["VOICE"][table_num] = channel
+        self.channels["VOICE"][str(table_num)] = channel
 
     def all_channels_ids(self):
         return {
@@ -386,12 +389,17 @@ class BaseInteraction:
         return f"[{deck.name}]({deck.to_vdb()})"
 
     async def _align_roles(
-        self, raise_on_exists: bool = False, silence_exceptions: bool = False
+        self,
+        raise_on_exists: bool = False,
+        silence_exceptions: bool = False,
     ) -> None:
         # list what is expected
         expected = [(r, self.discord.role_name(r)) for r in Role]
-        for table_num in range(1, self.tournament.tables_count() + 1):
-            expected.append((table_num, self.discord.role_name(Role.PLAYER, table_num)))
+        if self.tournament.state == tournament.TournamentState.PLAYING:
+            for table_num in range(1, self.tournament.tables_count() + 1):
+                expected.append(
+                    (str(table_num), self.discord.role_name(Role.PLAYER, table_num))
+                )
         logger.debug("expected roles: %s", expected)
         # delete spurious keys from registry
         to_delete = []
@@ -408,15 +416,22 @@ class BaseInteraction:
             del self.discord.roles[key]
         # compare what exists with what is registered
         existing = await self.bot.rest.fetch_roles(self.guild_id)
+        # special case for the root judge role: keep it and its ID if it exists
+        root_judge = [
+            r for r in existing if r.name == self.discord.role_name(Role.ROOT_JUDGE)
+        ]
+        if root_judge:
+            self.discord.roles[Role.ROOT_JUDGE] = root_judge[0]
         existing = [r for r in existing if r.name.startswith(self.discord.prefix + "-")]
         if existing and raise_on_exists:
             raise CommandFailed(
                 f"Roles with the {self.discord.prefix}- prefix exist: "
                 "remove them or use another tournament name."
             )
-        logger.debug("existing roles on discord: %s", existing)
+        logger.debug("existing roles on discord: %s", existing + root_judge)
         registered = {r.id for r in self.discord.roles.values()}
         logger.debug("registered roles: %s", self.discord.roles)
+        # delete spurious from discord
         to_delete = [r.id for r in existing if r.id not in registered]
         if to_delete:
             logger.warning("deleting unexpected roles on discord: %s", to_delete)
@@ -425,8 +440,8 @@ class BaseInteraction:
                 *(self.bot.rest.delete_role(self.guild_id, r) for r in to_delete),
                 return_exceptions=silence_exceptions,
             )
-        existing = {r.id for r in existing if r.id in registered}
-        # delete spurious from registry
+        existing = {r.id for r in existing + root_judge if r.id in registered}
+        # delete spurious from registry (do not delete the root judge)
         to_delete = []
         for key, role in self.discord.roles.items():
             if role.id not in existing:
@@ -455,6 +470,7 @@ class BaseInteraction:
                     )
                 )
         roles = await asyncio.gather(*roles_to_create)
+        # assign the newly created roles to the guild members
         id_roles = []
         for key, role in zip(keys_to_create, roles):
             logger.debug("creating role in registry: %s, %s", key, role)
@@ -467,6 +483,12 @@ class BaseInteraction:
                 id_roles.extend(
                     (p.discord, role) for p in self.tournament.players.iter_players()
                 )
+            elif key == Role.ROOT_JUDGE:
+                id_roles.extend((uid, role) for uid in self.discord.judges)
+                id_roles.append((self.bot.get_me().id, role))
+                logger.warning(
+                    "Recreating Root judge role, review commands permissions settings"
+                )
             elif key == Role.JUDGE:
                 id_roles.extend((uid, role) for uid in self.discord.judges)
                 id_roles.append((self.bot.get_me().id, role))
@@ -475,12 +497,17 @@ class BaseInteraction:
                 )
             elif key == Role.SPECTATOR:
                 id_roles.extend((uid, role) for uid in self.discord.spectators)
-            elif isinstance(key, int):  # table role
+            else:
+                try:
+                    table_num = int(key)
+                except ValueError:
+                    raise RuntimeError(f"Unexpected role key {key}")
+                # table role
                 if not self.tournament.rounds:
-                    logger.debug("Mising table role, but no round in progress")
+                    logger.debug("Missing table role, but no round in progress")
                     continue
-                round = self.tournament.rounds[-1]
-                table = round.seating[key - 1]
+                round = self.tournament.rounds[self.tournament.current_round - 1]
+                table = round.seating[table_num - 1]
                 for number in table:
                     if number not in self.tournament.players:
                         continue
@@ -488,8 +515,6 @@ class BaseInteraction:
                     if not discord_id:
                         continue
                     id_roles.append((discord_id, role))
-            else:
-                raise RuntimeError(f"Unexpected role key {key}")
 
         if id_roles:
             logger.debug("assigning roles: %s", id_roles)
@@ -507,7 +532,9 @@ class BaseInteraction:
         logger.debug("roles aligned")
 
     async def _align_channels(
-        self, raise_on_exists: bool = False, silence_exceptions: bool = False
+        self,
+        raise_on_exists: bool = False,
+        silence_exceptions: bool = False,
     ) -> None:
         # list what is expected
         expected = [
@@ -554,77 +581,78 @@ class BaseInteraction:
                 ],
             ),
         ]
-        for table_num in range(1, self.tournament.tables_count() + 1):
-            expected.append(
-                (
-                    ("TEXT", table_num),
-                    self.discord.channel_name(
-                        Role.PLAYER, hikari.ChannelType.GUILD_TEXT, table_num
-                    ),
-                    [
-                        hikari.PermissionOverwrite(
-                            id=self.bot.get_me().id,
-                            type=hikari.PermissionOverwriteType.MEMBER,
-                            allow=perm.ARCHON,
+        if self.tournament.state == tournament.TournamentState.PLAYING:
+            for table_num in range(1, self.tournament.tables_count() + 1):
+                expected.append(
+                    (
+                        ("TEXT", str(table_num)),
+                        self.discord.channel_name(
+                            Role.PLAYER, hikari.ChannelType.GUILD_TEXT, table_num
                         ),
-                        hikari.PermissionOverwrite(
-                            id=self.guild_id,
-                            type=hikari.PermissionOverwriteType.ROLE,
-                            deny=perm.TEXT,
-                        ),
-                        hikari.PermissionOverwrite(
-                            id=self.discord.roles[table_num].id,
-                            type=hikari.PermissionOverwriteType.ROLE,
-                            allow=perm.TEXT,
-                        ),
-                        hikari.PermissionOverwrite(
-                            id=self.discord.roles[Role.JUDGE].id,
-                            type=hikari.PermissionOverwriteType.ROLE,
-                            allow=perm.TEXT,
-                        ),
-                        hikari.PermissionOverwrite(
-                            id=self.discord.roles[Role.SPECTATOR].id,
-                            type=hikari.PermissionOverwriteType.ROLE,
-                            allow=perm.SPECTATE_TEXT,
-                        ),
-                    ],
+                        [
+                            hikari.PermissionOverwrite(
+                                id=self.bot.get_me().id,
+                                type=hikari.PermissionOverwriteType.MEMBER,
+                                allow=perm.ARCHON,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=self.guild_id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                deny=perm.TEXT,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=self.discord.roles[str(table_num)].id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                allow=perm.TEXT,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=self.discord.roles[Role.JUDGE].id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                allow=perm.TEXT,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=self.discord.roles[Role.SPECTATOR].id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                allow=perm.SPECTATE_TEXT,
+                            ),
+                        ],
+                    )
                 )
-            )
-            expected.append(
-                (
-                    ("VOICE", table_num),
-                    self.discord.channel_name(
-                        Role.PLAYER, hikari.ChannelType.GUILD_VOICE, table_num
-                    ),
-                    [
-                        hikari.PermissionOverwrite(
-                            id=self.bot.get_me().id,
-                            type=hikari.PermissionOverwriteType.MEMBER,
-                            allow=perm.ARCHON,
+                expected.append(
+                    (
+                        ("VOICE", str(table_num)),
+                        self.discord.channel_name(
+                            Role.PLAYER, hikari.ChannelType.GUILD_VOICE, table_num
                         ),
-                        hikari.PermissionOverwrite(
-                            id=self.guild_id,
-                            type=hikari.PermissionOverwriteType.ROLE,
-                            deny=perm.VOICE,
-                        ),
-                        hikari.PermissionOverwrite(
-                            id=self.discord.roles[table_num].id,
-                            type=hikari.PermissionOverwriteType.ROLE,
-                            allow=perm.VOICE,
-                        ),
-                        hikari.PermissionOverwrite(
-                            id=self.discord.roles[Role.JUDGE].id,
-                            type=hikari.PermissionOverwriteType.ROLE,
-                            allow=perm.JUDGE_VOICE,
-                        ),
-                        hikari.PermissionOverwrite(
-                            id=self.discord.roles[Role.SPECTATOR].id,
-                            type=hikari.PermissionOverwriteType.ROLE,
-                            allow=perm.SPECTATE_VOICE,
-                        ),
-                    ],
+                        [
+                            hikari.PermissionOverwrite(
+                                id=self.bot.get_me().id,
+                                type=hikari.PermissionOverwriteType.MEMBER,
+                                allow=perm.ARCHON,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=self.guild_id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                deny=perm.VOICE,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=self.discord.roles[str(table_num)].id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                allow=perm.VOICE,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=self.discord.roles[Role.JUDGE].id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                allow=perm.JUDGE_VOICE,
+                            ),
+                            hikari.PermissionOverwrite(
+                                id=self.discord.roles[Role.SPECTATOR].id,
+                                type=hikari.PermissionOverwriteType.ROLE,
+                                allow=perm.SPECTATE_VOICE,
+                            ),
+                        ],
+                    )
                 )
-            )
         # delete spurious keys from registry
         to_delete = []
         expected_keys = {e[0] for e in expected}
@@ -826,7 +854,6 @@ class OpenTournament(BaseCommand):
     """Open the tournament"""
 
     UPDATE = db.UpdateLevel.EXCLUSIVE_WRITE
-    ACCESS = CommandAccess.ADMIN  # For now, the admin access is public
     REQUIRES_TOURNAMENT = False
     DESCRIPTION = "ADMIN: Open a new event or tournament"
     OPTIONS = [
@@ -836,18 +863,9 @@ class OpenTournament(BaseCommand):
             description="The tournament name",
             is_required=True,
         ),
-        hikari.CommandOption(
-            type=hikari.OptionType.INTEGER,
-            name="rounds",
-            description=(
-                "The maximum number of rounds a player can play (not counting finals)"
-            ),
-            is_required=False,
-            min_value=1,
-        ),
     ]
 
-    async def __call__(self, name: str, rounds: Optional[int] = 0) -> None:
+    async def __call__(self, name: str) -> None:
         """Open the tournament, create channels and roles, then configure (chain)"""
         if self.tournament:
             raise CommandFailed("A tournament is already open here")
@@ -855,20 +873,8 @@ class OpenTournament(BaseCommand):
         logger.debug("Creating tournament...")
         self.tournament = tournament.Tournament(name=name)
         self.discord.prefix = "".join([w[0] for w in name.split()][:3])
-        if rounds:
-            self.tournament.max_rounds = rounds
         self.discord.judges.append(self.author.id)
         await self._align_roles(raise_on_exists=True)
-        # logger.debug("Add roles and create channels...")
-        # await asyncio.gather(
-        #     self.author.add_role(self.discord.roles[Role.JUDGE], reason=self.reason),
-        #     self.bot.rest.add_role_to_member(
-        #         self.guild_id,
-        #         self.bot.get_me(),
-        #         self.discord.roles[Role.JUDGE],
-        #         reason=self.reason,
-        #     ),
-        # )
         await self._align_channels(raise_on_exists=True)
         # author is now a judge, he can configure (next step)
         self.author.role_ids.append(self.discord.roles[Role.JUDGE].id)
@@ -1020,8 +1026,18 @@ class ConfigureTournament(BaseCommand):
                     if staggered
                     else (
                         "\nIf you have 6, 7 or 11 players, you can configure a "
-                        '"staggered" tournament, where each player sits a round out.'
+                        '"staggered" tournament, where each player sits a round out.\n'
                     )
+                )
+                + (
+                    (
+                        "\nIf this is a league (ie. more rounds are organized than the "
+                        "number each player is authorized to play individually), "
+                        f"you should use the {SetMaxRounds.mention()} command to set "
+                        "this individual limit."
+                    )
+                    if between
+                    else ""
                 )
             ),
         )
@@ -1045,6 +1061,40 @@ class ConfigureTournament(BaseCommand):
                 flags=hikari.MessageFlag.EPHEMERAL,
                 components=components,
             )
+
+
+class SetMaxRounds(BaseCommand):
+    """Optional: configure a maximum number of rounds for players.
+    Mostly useful for leagues.
+    """
+
+    UPDATE = db.UpdateLevel.WRITE
+    ACCESS = CommandAccess.JUDGE
+    DESCRIPTION = "JUDGE: Set a maximum number of rounds for the tournament"
+    OPTIONS = [
+        hikari.CommandOption(
+            type=hikari.OptionType.INTEGER,
+            name="rounds_count",
+            description="The number of rounds a player is allowed to play",
+            is_required=True,
+            min_value=1,
+        ),
+    ]
+
+    async def __call__(self, rounds_count: int) -> None:
+        self.tournament.max_rounds = rounds_count
+        self.update()
+        await self.create_or_edit_response(
+            embed=hikari.Embed(
+                title=f"Max rounds set: {rounds_count}",
+                description=(
+                    "Players will be forbidden to play more than "
+                    f"{rounds_count} round{'s' if rounds_count > 1 else ''} "
+                    "during this tournament."
+                ),
+            ),
+            flags=hikari.MessageFlag.EPHEMERAL,
+        )
 
 
 class CloseTournament(BaseCommand):
@@ -1097,6 +1147,39 @@ class CloseTournament(BaseCommand):
                     "This command can only be issued in the top level channel "
                     "(where you opened the tournament)."
                 )
+            # remove root judge role from the judges
+            # beware to keep it if they are also judges in another running tournament
+            root_judge = self.discord.roles.get(Role.ROOT_JUDGE)
+            if root_judge:
+                root_judge_remove = []
+                judges = await asyncio.gather(
+                    *(
+                        self.bot.rest.fetch_member(self.guild_id, judge)
+                        for judge in self.discord.judges
+                    )
+                )
+                guild_roles = await self.bot.rest.fetch_roles(self.guild_id)
+                guild_roles = {r.id: r for r in guild_roles}
+                for judge in judges:
+                    if any(
+                        rid
+                        for rid in judge.role_ids
+                        if rid in guild_roles
+                        and guild_roles[rid].name.endswith("-Judge")
+                    ):
+                        continue
+                    root_judge_remove.append(judge.id)
+                await asyncio.gather(
+                    *(
+                        self.bot.rest.remove_role_from_member(
+                            self.guils_id, judge, root_judge
+                        )
+                        for judge in root_judge_remove
+                    )
+                )
+                # do not delete the ROOT_JUDGE role from discord
+                self.discord.roles.pop(Role.ROOT_JUDGE)
+            # delete tournament channels and roles
             results = await asyncio.gather(
                 *(
                     self.bot.rest.delete_channel(channel_id)
@@ -1648,7 +1731,11 @@ class Round(BaseCommand):
         )
         if voice_channel:
             embed.add_field(name="Join vocal", value=f"<#{voice_channel}>", inline=True)
-        embed.add_field(name="Start the timer", value="`timer 2.5`", inline=True)
+        embed.add_field(
+            name="Start the timer",
+            value="`/timer start hours:2 minutes:30`",
+            inline=True,
+        )
         embed.set_thumbnail(hikari.UnicodeEmoji("🪑"))
         await self.bot.rest.create_message(channel_id, embed=embed)
 
@@ -1671,30 +1758,11 @@ class Round(BaseCommand):
             )
         )
         await self._align_roles()
-        # player_roles = []
-        # for role, table in zip(
-        #       self.discord.table_roles(), round.seating.iter_tables()
-        #   ):
-        #     for number in table:
-        #         if number not in self.tournament.players:
-        #             continue
-        #         discord_id = self.tournament.players[number].discord
-        #         if not discord_id:
-        #             continue
-        #         player_roles.append([discord_id, role])
-        # await asyncio.gather(
-        #     *(
-        #         self.bot.rest.add_role_to_member(
-        #             guild=self.guild_id, user=user, role=role
-        #         )
-        #         for user, role in player_roles
-        #     )
-        # )
         await self._align_channels()
+        self.update()
         await asyncio.gather(
             *(self._display_seating(i + 1) for i in range(round.seating.tables_count()))
         )
-        self.update()
         embed = hikari.Embed(
             title=f"Round {self.tournament.current_round} Seating",
         )
@@ -1791,25 +1859,6 @@ class Finals(BaseCommand):
         )
         await self._align_roles()
         await self._align_channels()
-        # finalists = []
-        # for number in round.seating[0]:
-        #     if number not in self.tournament.players:
-        #         continue
-        #     discord_id = self.tournament.players[number].discord
-        #     if not discord_id:
-        #         continue
-        #     finalists.append(discord_id)
-        # await asyncio.gather(
-        #     *(
-        #         self.bot.rest.add_role_to_member(
-        #             guild=self.guild_id,
-        #             user=discord_id,
-        #             role=self.discord.roles[1],
-        #             reason=self.reason,
-        #         )
-        #         for discord_id in finalists
-        #     )
-        # )
         self.update()
         seeding_embed = hikari.Embed(
             title="Finals seeding",
@@ -1818,7 +1867,7 @@ class Finals(BaseCommand):
             ),
         )
         await self.bot.rest.create_message(
-            self.discord.channels["TEXT"][1],
+            self.discord.get_table_text_channel(1),
             embed=seeding_embed,
         )
         await self.create_or_edit_response(
@@ -1845,8 +1894,22 @@ class Report(BaseCommand):
     ]
 
     async def __call__(self, vp: float) -> None:
+        if self.tournament.state != tournament.TournamentState.PLAYING:
+            raise CommandFailed("Scores can only be reported when a round is ongoing")
         self.tournament.report(self.author.id, vp)
         self.update()
+        info = self.tournament.player_info(self.author.id)
+        if not info.table:
+            return
+        embed = hikari.Embed(
+            title="Game report",
+            description=(
+                f"{self._player_display(self.author.id)} has reported "
+                f"{vp}VP{'s' if vp > 1 else ''}"
+            ),
+        )
+        channel_id = self.discord.get_table_text_channel(info.table).id
+        await self.bot.rest.create_message(channel_id, embed=embed)
         await self.create_or_edit_response(
             content="Result registered", flags=hikari.MessageFlag.EPHEMERAL
         )
@@ -1907,6 +1970,20 @@ class FixReport(BaseCommand):
             if self._is_judge_channel()
             else hikari.MessageFlag.EPHEMERAL,
         )
+        if round is not None:
+            return
+        info = self.tournament.player_info(user or vekn)
+        if not info.table:
+            return
+        embed = hikari.Embed(
+            title="Game report",
+            description=(
+                f"A judge has reported {vp}VP{'s' if vp > 1 else ''} for "
+                f"{self._player_display(user or vekn)}"
+            ),
+        )
+        channel_id = self.discord.get_table_text_channel(info.table).id
+        await self.bot.rest.create_message(channel_id, embed=embed)
 
 
 class ValidateScore(BaseCommand):
@@ -2291,10 +2368,10 @@ class Announce(BaseCommand):
                     "Registration will still be possible once you open check-in.\n"
                     "\n"
                     "**Important**\n"
-                    "If you're hosting an offline event or if the first round is about "
-                    f"to start, you should use {OpenCheckIn.mention()} now."
+                    "If you're hosting a live event or if the first round is about "
+                    f"to start, you should use {OpenCheckIn.mention()} now. "
                     "This way, a registration will mark the player as checked in and "
-                    "ready to play"
+                    "ready to play."
                 ),
             )
             judges_embed.add_field(
@@ -2532,8 +2609,6 @@ class Status(BaseCommand):
 
     async def __call__(self) -> None:
         await self.deferred(hikari.MessageFlag.EPHEMERAL)
-        if not self.tournament:
-            raise CommandFailed("No tournament in progress")
         judge_role = self.discord.roles[Role.JUDGE]
         embed = hikari.Embed(
             title=f"{self.tournament.name} — {self.tournament.players.count} players"
@@ -2559,7 +2634,7 @@ class Status(BaseCommand):
                         "with your registration."
                     )
         else:
-            info = self.tournament.player_info(self.author.id)
+            info = self.tournament.player_info(self.author.id, current_score=True)
             logger.debug("Player info: %s", info)
             embed.description = ""
             if info.drop and info.drop == tournament.DropReason.DROP:
@@ -2678,6 +2753,29 @@ class Status(BaseCommand):
         )
 
 
+class Help(BaseCommand):
+    """Useful alias."""
+
+    UPDATE = db.UpdateLevel.READ_ONLY
+    REQUIRES_TOURNAMENT = False
+    DESCRIPTION = "Ask me what to do"
+    OPTIONS = []
+
+    async def __call__(self) -> None:
+        if not self.tournament:
+            await self.create_or_edit_response(
+                "No tournament in progress, "
+                f"use {OpenTournament.mention()} to start one.\n"
+                "This command may be available only to specific roles in the server."
+            )
+            return
+        if self._is_judge():
+            next_step = Announce.copy_from_interaction(self)
+        else:
+            next_step = Status.copy_from_interaction(self)
+        return await next_step()
+
+
 class Standings(BaseCommand):
     """Standings of all players. Private (ephemeral) answer by default."""
 
@@ -2740,7 +2838,7 @@ class PlayerInfo(BaseCommand):
         vekn: Optional[str] = None,
         user: Optional[hikari.Snowflake] = None,
     ) -> None:
-        info = self.tournament.player_info(vekn or user)
+        info = self.tournament.player_info(vekn or user, current_score=True)
         description = self._player_display(info.player.vekn)
         description += (
             f"\n{info.rounds} round{'s' if info.rounds > 1 else ''} played {info.score}"
@@ -2901,7 +2999,9 @@ class PlayersList(BaseCommand):
         else:
             flag = hikari.MessageFlag.EPHEMERAL
         players = sorted(self.tournament.players.iter_players(), key=lambda p: p.number)
-        embed = hikari.Embed(title=f"Players ({self.tournament.players.count})")
+        playing = len([p for p in self.tournament.players.iter_players() if p.playing])
+        total = self.tournament.players.count
+        embed = hikari.Embed(title=f"Players ({playing}/{total})")
         player_lines = []
         for p in players:
             info = self.tournament.player_info(p.vekn)
@@ -2920,10 +3020,15 @@ class DownloadReports(BaseCommand):
     ACCESS = CommandAccess.JUDGE
     DESCRIPTION = "JUDGE: Get CSV reports for the tournament"
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._report_number = {}
+
     async def __call__(self) -> None:
         if self.tournament.state == tournament.TournamentState.PLAYING:
             raise CommandFailed("Finish the current round before exporting results")
         await self.deferred(hikari.MessageFlag.EPHEMERAL)
+        self._report_number.clear()
         reports = [self._build_results_csv()]
         if self.tournament.flags & tournament.TournamentFlag.DECKLIST_REQUIRED:
             reports.append(self._build_decks_json())
@@ -2962,22 +3067,28 @@ class DownloadReports(BaseCommand):
     def _build_results_csv(self):
         winner, ranking = self.tournament.standings()
         data = []
+        report_number = 1
         for rank, vekn, score in ranking:
             if vekn in self.tournament.dropped:
                 rank = "DQ"
             info = self.tournament.player_info(vekn)
-            data.append(
-                [
-                    info.player.number,
-                    info.player.vekn,
-                    info.player.name,
-                    info.rounds,
-                    score.gw,
-                    score.vp,
-                    info.player.seed or "",
-                    rank,
-                ]
-            )
+            if info.rounds <= 0:
+                self._report_number[vekn] = None
+            else:
+                self._report_number[vekn] = report_number
+                report_number += 1
+                data.append(
+                    [
+                        self._report_number[vekn],
+                        info.player.vekn,
+                        info.player.name,
+                        info.rounds,
+                        score.gw,
+                        score.vp,
+                        info.player.seed or "",
+                        rank,
+                    ]
+                )
         return self._build_csv(
             "Report.csv",
             data,
@@ -3003,9 +3114,11 @@ class DownloadReports(BaseCommand):
             self.tournament.players.iter_players(), key=lambda p: p.number
         ):
             info = self.tournament.player_info(player.vekn)
+            if not self._report_number.get(player.vekn):
+                continue
             data.append(
                 {
-                    "vken": player.vekn,
+                    "vekn": player.vekn,
                     "finals_seed": player.seed,
                     "rounds": info.rounds,
                     "score": info.score.to_json(),
@@ -3027,11 +3140,13 @@ class DownloadReports(BaseCommand):
         for player in sorted(
             self.tournament.players.iter_players(), key=lambda p: p.number
         ):
+            if not self._report_number.get(player.vekn):
+                continue
             name = self._player_first_last_name(player)
             info = self.tournament.player_info(player.vekn)
             data.append(
                 [
-                    player.number,
+                    self._report_number[player.vekn],
                     name[0],
                     name[1],
                     "",  # country
@@ -3055,7 +3170,7 @@ class DownloadReports(BaseCommand):
                     name = self._player_first_last_name(player)
                     data.append(
                         [
-                            number,
+                            self._report_number[player.vekn],
                             name[0],
                             name[1],
                             j,
@@ -3078,7 +3193,7 @@ class DownloadReports(BaseCommand):
             name = self._player_first_last_name(player)
             data.append(
                 [
-                    player.number,
+                    self._report_number[player.vekn],
                     name[0],
                     name[1],
                     1,  # table
@@ -3129,10 +3244,7 @@ class Raffle(BaseCommand):
 
 
 class ResetChannelsAndRoles(BaseCommand):
-    """For dev purposes and in case of bug: realign the channels.
-
-    # TODO: this is clumsy - improve channel management overall
-    """
+    """For dev purposes and in case of bug: realign the channels."""
 
     UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.ADMIN
@@ -3152,12 +3264,10 @@ class ResetChannelsAndRoles(BaseCommand):
         await self.create_or_edit_response(embed=embed)
 
 
-# TODO Remove TEXT channels, use voice channels chat instead
-# TODO Fix player discord mentions during registration (disconnected players)
-# TODO Include GW from current round in status when game is finished and fully reported
-# TODO Display table score on table channel
+# TODO Fix the "last round" access for staggered tournaments
 # TODO Upload decklist as txt file attachment
-# TODO More buttons to guide user (especially on /status)
 # TODO Make admin access admin-only
+# TODO More buttons to guide user (especially on /status)
+# TODO Fix player discord mentions during registration (disconnected players)
+# TODO Remove TEXT channels, use voice channels chat instead
 # TODO Use pydantic for serialization
-# TODO Make the bot configurable with server roles for command access

@@ -15,6 +15,11 @@ if you want the bot to run properly on your server.
 
 ## Cheatsheet
 
+**At any step, use `/announce` in the main channel to display helpful guidance messages for the players and judges both.**
+
+The announce message changes and depends on the step of the tournament you're at
+(registration, playing, in-between rounds, ...).
+
 Players:
 
 - Register: `/register [vekn] [name] [decklist]`
@@ -27,11 +32,16 @@ Judges:
 
 A number of commands target a specific player. In those cases, you can always use either
 the player's ID in the tournament (VEKN) _or_ the Discord user. The Discord user might
-be more practical for online tournaments, where using the idea might be easier in some
+be more practical for online tournaments, where using the VEKN might be easier in some
 cases, and indispensible for offline tournaments.
+
+For players who do not have a _real_ VEKN, the bot delivers a temporary number
+prefixed with "P" instead, like `P-5`, to serve as vekn for the tournament.
+You can use this identifier (prefix included) as the VEKN number in all commands
 
 - Opening the tournament:
     * Open a new tournament: `/open-tournament`
+    * Set a maximum number of rounds (league): `/set-max-round [rounds_count]`
     * Announcement (help and guidance messages for both players and judges): `/announce`
     * Appoint judges and bots: `/appoint [role] [user]`
     * Configure the tournament: `/configure-tournament`
@@ -56,17 +66,18 @@ cases, and indispensible for offline tournaments.
     * Validate an odd score situation (eg. because of a Judge ruling): `/validate-score`
 - Misc:
     * Make a raffle amoung players `/raffle [count]`
-    * Reset the channels `/reset-channels`
 - Ending the tournament:
     * Download the reports: `/download-reports`
     * Close the tournament (make sure you downloaded the reports first): `/close-tournament`
 
-## Usage
+Admins:
+- Reset channels and roles with `/reset-channels-and-roles`.
+  This can fix things if you've messed up (eg. deleted a tournament role or channel).
+
+## Quickstart: Simple Usage
 
 The archon bot can be used in a variety of tournament settings.
 The archon bot can only run **one tournament per category** in a Discord server.
-
-### Simplistic guide
 
 Simply choose a category (ie. a folder) in your discord server
 (or ask an admin to open one for you), and use the `/open-tournament` command.
@@ -75,12 +86,18 @@ Simply choose a category (ie. a folder) in your discord server
 
 The bot will then proceed to guide you in creating your tournament and using its commands.
 
-If you're unsure what to do, **at any stage use the `/announce` command**.
+If you're unsure what to do, **at any stage use the `/announce` command in the main tournament channel**.
 It will display help and guidance messages in the main and judges channel.
 
-### Basic tournament handling
+## Detailed guide
 
-This is the most basic case, and it is easy. Just open a tournament:
+The cheatsheet and quickstart are enough to use the bot:
+just use `/announce` whenever you want to know what to do next, and the bot will guide you.
+However, if you want to know more or encounter a tricky case, the rest of this documentation can, hopefully, help.
+
+### Running a tournament
+
+Just open a tournament:
 
 ```
 /open-tournament name: My Tournament
@@ -113,34 +130,73 @@ It's useful if you like to give streamers access to the vocal channels:
 
 ##### Number of rounds
 
-At tournament creation (when you use `/open-tournament`), you can indicate the maximum number of rounds.
+You can indicate the maximum number of rounds a player can play with `/set-max-round`.
 It is only relevant if you're planning some kind of league or championship where there are more time slots for rounds
 than the number of rounds you expect each player to play.
 For example, if you're planning 1 "rounds slots" every Saturday for six weeks (6 possible dates),
-but only require your players to play and complete 3 rounds. In that case use the optional `rounds`
-parameter on tournament creation:
+but only require your players to play and complete 3 rounds. In that case use the rounds limit
 
 ```
-/open-tournament rounds: 3
+/set-max-round rounds: 3
 ```
 
 This will prevent players to be able to play more than this number of rounds,
 even if you're running more "rounds slots" than this with the bots.
 
-In most tournaments, this parameter is useless because you expect players to play all the rounds you're running.
+In most tournaments, this parameter is useless because you expect players to play all the rounds you're running
+if they can.
 
 ##### VEKN ID requirement
 
 In official tournament, a VEKN ID is required. The bot will check is existence of the VEKN ID against the VEKN registry,
 although it cannot verify the player is actually the right person (we trust the players to provide the _right_ id).
-Different players cannot have the same VEKN ID so if 
+Different players cannot have the same VEKN ID so if a player makes a mistake (wrong VEKN), the can simply use
+`/register` again with the right one. If someone else has their VEKN,
+they need to ask a judge to use `/drop-player` and `/register-player` to remedy the issue.
+
+**You need to use this requirement for sanctionned tournaments.**
+If VEKN ID are required, the bot will issue archon-compatible reports files
+at the end of the tournament, facilitating reporting.
 
 ##### Decklist requirement
 
+If decklists are required, players wil need to submit them before checking in.
+They can use [VDB](https://vdb.im) or [Amaranth](https://amaranth.vtes.co.nz) urls.
+The decklist is saved upon submission: subsequent changes in VDB or Amaranth will
+need for the player to submit their decklist again to be recorded.
+Judges will have access to the decklists, but only after the first round has started.
+
 ##### Check-in (once or on each round)
 
-##### Standard or League
+If you're running a live event or an event spanning a single day, a single
+check-in is enough. Otherwise and especially online, opt for a check-in each round
+to make sure the players are actually connected and ready to play before each round.
+If you have two rounds back to back, you will have the option to keep the
+checkin information after the first when you use `/round finish`.
 
+##### Multideck
+
+Normally a single deck is allowed, with this option, players can submit a new decklist
+each round.
+
+##### Late joiners
+
+Normally players are not allowed to register anymore once the first round has started,
+although a Judge can always bypass this with `/register-player`. But if you are running
+a league, you might want players to be able to register freely in between rounds.
+In that case, that's the option you want.
+
+##### Staggered tournament (6, 7 & 11 players)
+
+A V:TES seating can accomodate any number of players,
+except if you have 6, 7 or 11 players. In this situation, the `/round start`
+command will yield an error because it cannot get a table for everyone.
+You should either have some players drop out or additional players check in.
+
+In case you want to run a tournament with 6, 7, or 11 players, you can setup a staggered
+tournament. In this case, you also need to use `/set-max-round` to indicate the number
+of rounds each player will play, so that the bot can compute a full staggered-rounds
+seating structure for you.
 
 #### Registration
 
@@ -167,8 +223,10 @@ Players can then register easily with the `/register` command:
 - `decklist`: Only if the tournament requires it, VDB (standard and deck-in-url) and Amaranth URLs are accepted.
   The decklist is _copied and saved_ by the bot when the command is issued.
   If the decklist is modified by the player in VDB or Amaranth, it will not be taken into account by the bot.
-  They need to issue the command _again_ with a decklist URL (even if it's the same) to update the deck list in the bot registry.
-  For a standard (non-league) tournament, the bot will prevent a player to modify their decklist once the first round has started.
+  They need to issue the command _again_ with a decklist URL (even if it's the same)
+  to update the deck list in the bot registry.
+  For a standard (non-league) tournament, the bot will prevent a player to modify their decklist
+  once the first round has started.
 
 If a VEKN ID is required and a player does not have one,
 or if a player is struggling with the commands, any Judge (including you) can register
@@ -178,7 +236,8 @@ a player in their stead:
 /register-player [vekn] [name] [decklist] [user]
 ```
 
-- `vekn:` If the player has one. In that case, you don't need to fill the name, it will be fetched from the VEKN registry.
+- `vekn:` If the player has one. In that case, you do not need to fill in the name,
+  it will be fetched from the VEKN registry.
 - `name:` If the player has no VEKN or you're not using them. In that case, no need to fill the VEKN
 - `decklist:` A deck URL (either VDB or Amaranth)
 - `user:` The Discord user (optional, but without it they will not be able to check in themselves)
@@ -191,7 +250,8 @@ You can display the list of registered players at any time
 
 Any **subsequent use of registration commands** on the same user/id will _update_ that player's registration with
 the additional information, overwriting the existing registration with the new information you provide.
-It will keep any information that was already there (vekn, name, deck list) if you do not provide a newer information for this field.
+It will keep any information that was already there (vekn, name, deck list)
+if you do not provide a newer information for this field.
 
 Note that registering players in advance before the tournament is an option for convenience, it's not a requirement.
 Once the tournament begins, you should issue the `/open-check-in` command to let the bot know, you will still be able to
@@ -347,7 +407,7 @@ You can then close the tournament:
 ```
 
 **Note the channels and roles created by the bot will be deleted**,
-including the `#Judges` channels. Make sure you have downloaded the reports first
+including the `#Judges` channels. Make sure you have downloaded the reports first.
 
 ### Corner cases
 
@@ -381,7 +441,7 @@ Judges can also forcibly drop a player if they've just disappeared without warni
 /drop-player user: @late_player
 ```
 
-- `vekn` or `user`: you can refer to the player by it's Discord handle or tournament ID.
+- `vekn` or `user`: you can refer to the player by its Discord handle or tournament ID.
 
 But beware that this does not count as a disqualification: the player can come back
 and check in again in a later round. If you want to disqualify a player, use:
@@ -402,6 +462,7 @@ cancel the round you just started and start a new one:
 ```
 
 Note you can also use `/round reset` to reset the finals if you have a missing finalist.
+In that case though, the toss is _not_ rerolled.
 
 #### Cautions, warnings, disqualification
 
@@ -418,7 +479,6 @@ Judges can issue cautions, warnings and disqualify players:
 If any caution or warning has been previously issued, the bot will display
 the previous issues and ask you if you want to upgrade the level of your penalty
 or disqualify the player (in case of a second warning).
-
 
 #### Fix a round result
 
@@ -450,158 +510,6 @@ A judge can force an odd VP result to be accepted:
 - `table`: The table for which the odd score is to be validated
 - `note`: Explain why this odd scoring happened
 - `round`: current round by default, but you can fix a previous round by giving its number.
-
-### Sanctioned tournament
-
-Sanctionned tournaments require some additional steps.
-You want to make sure the players have a valid VEKN ID number before letting them
-check in. You can use the registration feature:
-
-```
-archon register 1000123 Alice Allister
-```
-
-Only a judge can issue the `register` command, they have to check the provided VEKN ID
-on the [VEKN registry](https://www.vekn.net/player-registry) manually.
-When using the registration feature, the archon bot will **deny check-in** to players
-who are not registered.
-
-If a player does not have a VEKN ID yet, you can still register them on a temporary ID
-provide them a VEKN ID number after the tournament:
-
-```
-archon register - Alice Allister
-```
-
-Finally, you can check the list of all registered players
-in the `#Judges` private channel:
-
-```
-archon registrations
-```
-
-Note if you want to check VEKN IDs programatically, this package includes a small
-script for this. You'll need the python `aiohttp` package installed:
-
-```bash
-VEKN_LOGIN='your_login' VEKN_PASSWORD='your_password' ./check-vekn.py < vekn_ids.txt
-```
-
-This assumes you can feed a simple `vekn_ids.txt` listing one VEKN ID# per line.
-
-#### Upload a registration file
-
-You can also handle your registrations separately and just upload a file listing
-the registered players:
-
-```
-archon upload
-```
-
-Just provide the registration file as an attachment. It must be a simple
-[CSV file](https://en.wikipedia.org/wiki/Comma-separated_values)
-with no header and 2 columns:
-
-1. the player name
-2. their VEKN ID
-
-For example:
-
-```csv
-Alice Allister, 1000123
-Bob Beril, 1000234
-```
-
-Note that this _updates_ the registrations list: you can upload multiple files,
-each new input will override the previous ones based on the VEKN ID.
-Previously registered VEKN IDs that do not appear in the new file will be kept.
-
-#### Uploading an archon file to VEKN
-
-Once you close the tournament, you will get CSV files matching the
-[VEKN Archon file](http://www.vekn.net/downloads) structure:
-
-```
-archon close
-```
-
-If you used the registration feature, this will give you, in addition to the normal
-`Results.csv` file, a `Methuselahs.csv` file, a `Round_N.csv` file for each round and
-a `Finals.csv` file for the finals. You can import those files in a standard
-[VEKN archon file](http://www.vekn.net/downloads)
-in the relevant tabs using your favorite software import feature.
-
-Fill up the `Tournament Info` tab manually and make sure to fill the "Coin Ranking"
-in case there was a tie for a spot on the finals table.
-Your archon file is ready for upload.
-
-### League
-
-You can use the archon bot to run a league, ie. a tournament spanning multiple weeks.
-You can simply reset the check-in every tournament day:
-
-```
-archon checkin-reset
-archon checkin-start
-```
-
-You can issue the `archon checkin-reset` command after the end of each round or day:
-it will empty the players list and close the check-in until you open it again using
-the `archon checkin-start` command. This way, every time a judge is present and wants
-to run a league round, they just have to:
-
-```
-archon checkin-start
-archon round-start
-```
-
-And once the round is finished:
-
-```
-archon round-finish
-archon checkin-reset
-```
-
-This can also be used to run a normal tournament over multiple days.
-
-The archon bot has no limit in the number of rounds and will optimise seating
-on each round, taking into account the players attending or not.
-Once all your league rounds are finished, you can check the standings as usual:
-
-```
-archon standings
-```
-
-For the finals, make sure you disqualify any absent top seed before launching:
-
-```
-archon disqualify @top_5_player absent for finals
-archon finals
-```
-
-### Staggered tournament (6, 7 & 11 players)
-
-A V:TES seating can accomodate any number of players,
-except if you have 6, 7 or 11 players. In this situation, the `archon round-start`
-command will yield an error because it cannot get a table for everyone.
-You should either have some players drop out or additional players check in.
-
-In case you want to run a tournament with 6, 7, or 11 players, you can setup a staggered
-tournament by indicating the number of rounds played for each players:
-
-```
-archon staggered 2
-```
-
-The archon bot will devise a staggered round structure where everyone plays
-exactly that number of rounds. For example, for everyone to play 2 rounds,
-the bot will prepare 3 rounds where some players are left out of each round.
-To play 3 rounds, it will prepare 4 or 5 rounds depending on the number of players.
-You cannot setup a staggered tournament with more than 10 rounds played by player.
-
-Beware that once you go for a staggered tournament,
-no player can be added or removed between rounds. This means **check-in, drop out
-and disqualifications are disabled** once you're in a staggered tournament.
 
 ### Offline tournament
 
@@ -681,4 +589,4 @@ And if a player drops in between rounds, just drop them:
 This is an Open Source software under MIT license. Contributions are welcome,
 feel free to [open an issue](https://github.com/lionel-panhaleux/archon-bot/issues)
 if you encounter a bug or have a feature request, and we will try to accomodate.
-If you're up to it, pull requests are welcome and will be merged if they pass the tests.
+If you are up for it, pull requests are welcome and will be merged if they pass the tests.

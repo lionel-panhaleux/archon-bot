@@ -1,5 +1,5 @@
-0.24 (unreleased)
------------------
+1.0 (2023-02-21)
+----------------
 
 - Improve DB access and concurrency management
 - Better Discord roles and channels management

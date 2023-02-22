@@ -1592,11 +1592,21 @@ class Appoint(BaseCommand):
         await self.deferred(flags=hikari.MessageFlag.EPHEMERAL)
         if role in ["JUDGE", "BOT"]:
             self.discord.judges.append(user)
-            await self.bot.rest.add_role_to_member(
-                self.guild_id,
-                user,
-                self.discord.roles[Role.JUDGE],
-                reason=self.reason,
+            await asyncio.gather(
+                *(
+                    self.bot.rest.add_role_to_member(
+                        self.guild_id,
+                        user,
+                        self.discord.roles[Role.JUDGE],
+                        reason=self.reason,
+                    ),
+                    self.bot.rest.add_role_to_member(
+                        self.guild_id,
+                        user,
+                        self.discord.roles[Role.ROOT_JUDGE],
+                        reason=self.reason,
+                    ),
+                )
             )
         else:
             self.discord.spectators.append(user)

@@ -88,9 +88,6 @@ async def init():
             "category TEXT, "
             "data json)"
         )
-        cursor.execute(
-            "CREATE TABLE IF NOT EXISTS discord_config(" "guild TEXT, " "data json)"
-        )
 
 
 async def reset():

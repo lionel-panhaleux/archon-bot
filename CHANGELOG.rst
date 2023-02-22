@@ -1,8 +1,8 @@
 1.1 (unreleased)
 ----------------
 
-- Nothing changed yet.
-
+- Appointed judges get the root Archon-Judge role too
+- Fix spurious table creation in DB
 
 1.0 (2023-02-21)
 ----------------

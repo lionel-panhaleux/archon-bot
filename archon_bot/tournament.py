@@ -423,7 +423,7 @@ class Tournament:
             )
             self.players.add(player)
         # check for max_rounds
-        if PlayerInfo(player.vekn, self).rounds >= self.max_rounds:
+        if self.max_rounds and PlayerInfo(player.vekn, self).rounds >= self.max_rounds:
             raise ErrorMaxRoundReached()
         # decklist requirement on check-in
         if (
@@ -496,17 +496,6 @@ class Tournament:
     def _reset_checkin(self) -> None:
         for player in self.players.iter_players():
             player.playing = False
-
-    def open_registrations(self) -> None:
-        if self.state == TournamentState.PLAYING:
-            raise CommandFailed("Round in progress: registrations cannot be open")
-        if self.state == TournamentState.CHECKIN:
-            raise CommandFailed("Check-in in progress: registrations are open")
-        # REGISTRATION, WAITING_FOR_*
-        if self.flags & TournamentFlag.STAGGERED:
-            raise CommandFailed("Tournament is staggered: cannot open registrations")
-        self._reset_checkin()
-        self.state = TournamentState.REGISTRATION
 
     def open_checkin(self) -> None:
         if self.flags & TournamentFlag.STAGGERED:
@@ -648,7 +637,7 @@ class Tournament:
         table = self.rounds[-1].seating[table_num - 1]
         if len(table) > 4:
             raise CommandFailed("Table has 5 players already")
-        if PlayerInfo(player.vekn, self).rounds >= self.max_rounds:
+        if self.max_rounds and PlayerInfo(player.vekn, self).rounds >= self.max_rounds:
             raise ErrorMaxRoundReached()
         table.append(player.number)
         player.playing = True
@@ -735,7 +724,10 @@ class Tournament:
                 self.state = TournamentState.WAITING_FOR_CHECKIN
             else:
                 for player in self.players.iter_players():
-                    if PlayerInfo(player.vekn, self).rounds >= self.max_rounds:
+                    if (
+                        self.max_rounds
+                        and PlayerInfo(player.vekn, self).rounds >= self.max_rounds
+                    ):
                         player.playing = False
         return self.rounds[-1]
 

@@ -1,4 +1,4 @@
-1.1 (unreleased)
+1.1 (2023-02-26)
 ----------------
 
 - Appointed judges get the root Archon-Judge role too

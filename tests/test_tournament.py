@@ -6,7 +6,8 @@ from archon_bot import tournament
 @pytest.mark.asyncio
 async def test_tournament():
     tourney = tournament.Tournament(name="Test Tournament")
-    assert await tourney.add_player(name="Alice") == {
+    alice = await tourney.add_player(name="Alice")
+    assert alice.to_json() == {
         "deck": {},
         "discord": 0,
         "name": "Alice",
@@ -19,7 +20,7 @@ async def test_tournament():
     await tourney.add_player(name="Claire")
     await tourney.add_player(name="Doug")
     # dropping players at registration removes them from the list
-    await tourney.drop("P-4")
+    tourney.drop("P-4")
     assert tourney.to_json() == {
         "current_round": 0,
         "dropped": {},
@@ -56,15 +57,6 @@ async def test_tournament():
                 "seed": 0,
                 "vekn": "P-3",
             },
-            {
-                "deck": {},
-                "discord": 0,
-                "name": "Emily",
-                "number": 5,
-                "playing": False,
-                "seed": 0,
-                "vekn": "P-5",
-            },
         ],
         "rounds": [],
         "state": "REGISTRATION",
@@ -77,10 +69,10 @@ async def test_tournament():
     await tourney.add_player(name="Doug")
     await tourney.add_player(name="Emily")
     # eg. claire has not checked in, she's not playing
-    assert tourney.players["P-1"].playing == True
-    assert tourney.players["P-2"].playing == True
-    assert tourney.players["P-3"].playing == False
+    assert tourney.players["P-1"].playing is True
+    assert tourney.players["P-2"].playing is True
+    assert tourney.players["P-3"].playing is False
     assert tourney.players["P-5"].name == "Doug"
-    assert tourney.players["P-5"].playing == True
+    assert tourney.players["P-5"].playing is True
     assert tourney.players["P-6"].name == "Emily"
-    assert tourney.players["P-6"].playing == True
+    assert tourney.players["P-6"].playing is True

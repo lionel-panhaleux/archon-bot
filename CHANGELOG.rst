@@ -3,6 +3,7 @@
 
 - Appointed judges get the root Archon-Judge role too
 - Fix spurious table creation in DB
+- Fix use of max_rounds setting
 
 1.0 (2023-02-21)
 ----------------

@@ -1,7 +1,8 @@
 1.2 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Fix major player numbering issue (ended up mixing scores and seating in LBL)
+- Improved logging
 
 
 1.1 (2023-02-26)

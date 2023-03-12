@@ -117,7 +117,16 @@ async def _interaction_response(instance, interaction, content):
 @bot.listen()
 async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
     """Handle interactions (slash commands)."""
-    logger.info("Interaction %s", event.interaction)
+    if not event.interaction:
+        return
+    logger.info(
+        "Interaction %s from %s (Guild %s - Channel %s). Args: %s",
+        event.interaction.command_name,
+        event.interaction.user.username,
+        event.interaction.guild_id,
+        event.interaction.channel_id,
+        {option.name: option.value for option in (event.interaction.options or [])},
+    )
     if not event.interaction.guild_id:
         await _interaction_response(
             event.interaction,

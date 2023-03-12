@@ -279,8 +279,9 @@ class Tournament:
         self.players: PlayerDict = PlayerDict()
         for p in kwargs.get("players", []):
             self.players.add(Player(**p))
-        self.players.next_number = (
-            max([p.number for p in self.players.iter_players()] + [0]) + 1
+        self.players.next_number = kwargs.get(
+            "next_number",
+            max([p.number for p in self.players.iter_players()] + [0]) + 1,
         )
         self.dropped: Dict[str, DropReason] = {
             k: DropReason(v) for k, v in kwargs.get("dropped", {}).items()
@@ -303,6 +304,7 @@ class Tournament:
             "current_round": self.current_round,
             "state": self.state,
             "players": [p.to_json() for p in self.players.iter_players()],
+            "next_number": self.players.next_number,
             "dropped": self.dropped,
             "rounds": [r.to_json() for r in self.rounds],
             "notes": {k: [n.to_json() for n in v] for k, v in self.notes.items()},
@@ -552,7 +554,8 @@ class Tournament:
                 callback=asgiref.sync.async_to_sync(progression_callback),
             )
             logger.info(
-                "{self.name}: optimised seating for round %s with score %s",
+                "%s: optimised seating for round %s with score %s",
+                self.name,
                 self.current_round,
                 score,
             )
@@ -600,7 +603,8 @@ class Tournament:
         )
         self.rounds = [Round(seating=r) for r in rounds]
         logger.info(
-            "{self.name}: optimised seating for %s rounds with score %s",
+            "%s: optimised seating for %s rounds with score %s",
+            self.name,
             rounds_count,
             score,
         )

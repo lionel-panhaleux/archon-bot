@@ -119,20 +119,27 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
     """Handle interactions (slash commands)."""
     if not event.interaction:
         return
-    logger.info(
-        "Interaction %s from %s (Guild %s - Channel %s). Args: %s",
-        event.interaction.command_name,
-        event.interaction.user.username,
-        event.interaction.guild_id,
-        event.interaction.channel_id,
-        {option.name: option.value for option in (event.interaction.options or [])},
-    )
-    if not event.interaction.guild_id:
+    if not getattr(event.interaction, "guild_id", None):
         await _interaction_response(
             event.interaction,
             "Archon cannot be used in a private channel",
         )
         return
+    logger.info(
+        "Interaction %s from %s (Guild %s - Channel %s). Args: %s",
+        getattr(
+            event.interaction,
+            "command_name",
+            getattr(event.interaction, "custom_id", "?"),
+        ),
+        event.interaction.user.username,
+        event.interaction.guild_id,
+        event.interaction.channel_id,
+        {
+            option.name: option.value
+            for option in (getattr(event.interaction, "options", None) or [])
+        },
+    )
     if event.interaction.type == hikari.InteractionType.APPLICATION_COMMAND:
         try:
             instance = None

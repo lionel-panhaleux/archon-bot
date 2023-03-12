@@ -1,4 +1,4 @@
-1.2 (unreleased)
+1.2 (2023-03-12)
 ----------------
 
 - Fix major player numbering issue (ended up mixing scores and seating in LBL)

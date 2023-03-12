@@ -28,6 +28,7 @@ async def test_tournament():
         "flags": tournament.TournamentFlag(0),
         "max_rounds": 0,
         "name": "Test Tournament",
+        "next_number": 5,
         "notes": {},
         "players": [
             {

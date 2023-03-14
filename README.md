@@ -95,7 +95,7 @@ As soon as you open your first tournmanet with the Archon bot, it will create a 
 `Archon Judge` on your server. This role will be assigned to all judges for all tournaments.
 You can use it to set the commands permissions so as to limit clutter for normal players.
 
-Go to Server `Settings > Integrations > Archon`
+Go to `Server Settings > Integrations > Archon`
 
 ![Integrations](images/integrations.png)
 

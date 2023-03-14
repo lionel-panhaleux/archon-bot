@@ -89,6 +89,20 @@ The bot will then proceed to guide you in creating your tournament and using its
 If you're unsure what to do, **at any stage use the `/announce` command in the main tournament channel**.
 It will display help and guidance messages in the main and judges channel.
 
+## Command Permissions
+
+As soon as you open your first tournmanet with the Archon bot, it will create a long standing role called
+`Archon Judge` on your server. This role will be assigned to all judges for all tournaments.
+You can use it to set the commands permissions so as to limit clutter for normal players.
+
+Go to Server `Settings > Integrations > Archon`
+
+![Integrations](images/integrations.png)
+
+And change the permissions for all judge commands to make them available exclusively to the `Archon Judge` role
+
+![Permissions](images/permissions.png)
+
 ## Detailed guide
 
 The cheatsheet and quickstart are enough to use the bot:

@@ -50,6 +50,15 @@ async def connection(guild_id, category_id, update=UpdateLevel.READ_ONLY):
             await asyncio.wait_for(lock, 5)
         conn = await CONNECTION.get()
         yield conn
+    # reset connection on interface error
+    except psycopg2.InterfaceError:
+        CONNECTION.put_nowait(
+            psycopg2.connect(
+                dbname="archon",
+                user=DB_USER,
+                password=DB_PWD,
+            )
+        )
     except:  # noqa: E722
         conn.rollback()
         raise

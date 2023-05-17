@@ -1,7 +1,7 @@
 1.3 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Try and fix DB connection errors when the DB server unexpectedly closes the connection
 
 
 1.2 (2023-03-12)

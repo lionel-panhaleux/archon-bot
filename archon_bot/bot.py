@@ -16,6 +16,7 @@ from .commands import (
 )
 
 from . import db
+from . import utils
 from .tournament import Tournament
 
 
@@ -38,8 +39,11 @@ krcg.vtes.VTES.load()
 # ########################################################################### Bot events
 @bot.listen()
 async def on_ready(event: hikari.StartedEvent) -> None:
-    """Login success informative log."""
+    """Setup app commands and connect to the database."""
     logger.info("Ready as %s", bot.get_me().username)
+    await db.POOL.open()
+    if RESET:
+        await db.reset()
     await db.init()
     if not APPLICATION:
         APPLICATION.append(await bot.rest.fetch_application())
@@ -69,8 +73,12 @@ async def on_ready(event: hikari.StartedEvent) -> None:
             COMMANDS[command.id] = COMMANDS_TO_REGISTER[command.name]
         except KeyError:
             logger.exception("Received unknow command %s", command)
-    if RESET:
-        await db.reset()
+
+
+@bot.listen()
+async def on_stopped(event: hikari.StoppedEvent) -> None:
+    """Disconnect from the database."""
+    await db.POOL.close()
 
 
 @bot.listen()
@@ -158,7 +166,11 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
                 instance = command(
                     bot,
                     connection,
-                    Tournament(**tournament_data) if tournament_data else None,
+                    (
+                        utils.dictas(Tournament, tournament_data)
+                        if tournament_data
+                        else None
+                    ),
                     event.interaction,
                     channel.id,
                     channel.parent_id,
@@ -202,7 +214,11 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
                 instance = component_function(
                     bot,
                     connection,
-                    Tournament(**tournament_data) if tournament_data else None,
+                    (
+                        utils.dictas(Tournament, tournament_data)
+                        if tournament_data
+                        else None
+                    ),
                     event.interaction,
                     channel.id,
                     channel.parent_id,

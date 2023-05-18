@@ -1,8 +1,8 @@
-1.4 (unreleased)
+2.0 (unreleased)
 ----------------
 
-- Nothing changed yet.
-
+- Refactor: use dataclasses, all discord infos in extra (including players discord ID)
+- Performance: use orjson, async DB commands and connection pool
 
 1.3 (2023-10-28)
 ----------------
@@ -11,12 +11,12 @@
 - Fix rounds number check (was off by one)
 - Fixed typos in README
 
+
 1.2 (2023-03-12)
 ----------------
 
 - Fix major player numbering issue (ended up mixing scores and seating in LBL)
 - Improved logging
-
 
 1.1 (2023-02-26)
 ----------------

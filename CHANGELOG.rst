@@ -1,8 +1,8 @@
-1.3 (unreleased)
+2.0 (unreleased)
 ----------------
 
 - Try and fix DB connection errors when the DB server unexpectedly closes the connection
-
+- Refactor: use dataclasses
 
 1.2 (2023-03-12)
 ----------------

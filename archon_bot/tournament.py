@@ -1,16 +1,15 @@
 import collections
 import enum
-import functools
 import itertools
 import logging
 import math
 import os
 import random
-from typing import Callable, Dict, Generator, List, Optional, Tuple, Union
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional, Tuple
 
 import aiohttp
 import asgiref.sync
-import hikari
 import krcg.deck
 import krcg.seating
 import krcg.utils
@@ -64,41 +63,22 @@ class NoteLevel(str, enum.Enum):
 
 
 class PlayerStatus(str, enum.Enum):
+    NOT_REGISTERED = "NOT_REGISTERED"
     CHECKED_IN = "CHECKED_IN"
     CHECKIN_REQUIRED = "CHECKIN_REQUIRED"
+    DROPPED_OUT = "DROPPED_OUT"
     DISQUALIFIED = "DISQUALIFIED"
     PLAYING = "PLAYING"
-    MISSING_DECK = "DECK"
+    MISSING_DECK = "MISSING_DECK"
     WAITING = "WAITING"
     CHECKED_OUT = "CHECKED_OUT"
 
 
-class Note:
-    def __init__(self, **kwargs):
-        self.judge: hikari.Snowflake = hikari.Snowflake(kwargs.get("judge", 0))
-        self.level: NoteLevel = NoteLevel(kwargs.get("level", ""))
-        self.text: str = kwargs.get("text", "")
-
-    def to_json(self) -> dict:
-        return {
-            "judge": self.judge,
-            "level": self.level,
-            "text": self.text,
-        }
-
-
-@functools.total_ordering
+@dataclass(order=True)
 class Score:
-    def __init__(self, **kwargs):
-        self.gw: int = int(kwargs.get("gw", 0))
-        self.vp: float = float(kwargs.get("vp", 0))
-        self.tp: int = int(kwargs.get("tp", 0))
-
-    def __eq__(self, rhs):
-        return (self.gw, self.vp, self.tp) == (rhs.gw, rhs.vp, rhs.tp)
-
-    def __lt__(self, rhs):
-        return (self.gw, self.vp, self.tp) < (rhs.gw, rhs.vp, rhs.tp)
+    gw: int = 0
+    vp: float = 0.0
+    tp: int = 0
 
     def __str__(self):
         return f"({self.gw}GW{self.vp}, {self.tp}TP)"
@@ -114,208 +94,151 @@ class Score:
         self.tp += rhs.tp
         return self
 
-    def to_json(self) -> dict:
-        return {
-            "gw": self.gw,
-            "vp": self.vp,
-            "tp": self.tp,
-        }
+
+@dataclass
+class Note:
+    judge: str
+    level: NoteLevel = NoteLevel.NOTE
+    text: str = ""
 
 
-class Round:
-    def __init__(self, **kwargs):
-        self.seating: krcg.seating.Round = krcg.seating.Round(kwargs.get("seating", []))
-        self.results: Dict[str, Score] = {
-            int(k): Score(**v) for k, v in kwargs.get("results", {}).items()
-        }
-        self.finals: bool = kwargs.get("finals", False)
-        self.overrides: Dict[int, Note] = {
-            int(k): Note(**n) for k, n in kwargs.get("overrides", {}).items()
-        }
-        self.incorrect: List[int] = [int(i) for i in kwargs.get("incorrect", [])]
-
-    def to_json(self) -> dict:
-        return {
-            "seating": self.seating,
-            "results": {k: s.to_json() for k, s in self.results.items()},
-            "finals": self.finals,
-            "overrides": {k: n.to_json() for k, n in self.overrides.items()},
-            "incorrect": self.incorrect,
-        }
-
-    def score(self) -> None:
-        self.incorrect.clear()
-        if not self.seating:
-            return
-        for i, table in enumerate(self.seating.iter_tables(), 1):
-            tps = [12, 24, 36, 48, 60]
-            if len(table) == 4:
-                tps.pop(2)
-            scores = sorted(
-                [self.results.get(number, Score()).vp, number] for number in table
-            )
-            for vp, players in itertools.groupby(scores, lambda a: a[0]):
-                players = list(players)
-                tp = sum(tps.pop(0) for _ in range(len(players))) // len(players)
-                gw = 1 if tp == 60 and vp >= 2 else 0
-                for _, number in players:
-                    self.results[number] = Score(gw=gw, vp=vp, tp=tp)
-            if i not in self.overrides and sum(math.ceil(a[0]) for a in scores) != len(
-                table
-            ):
-                self.incorrect.append(i)
-            if not self.finals:
-                scores = [self.results.get(number, Score()).vp for number in table]
-                for j, score in enumerate(scores):
-                    if score % 1 and scores[j - 1] >= 1:
-                        self.incorrect.append(i)
-
-
+@dataclass(unsafe_hash=True)
 class Player:
-    def __init__(self, **kwargs):
-        self.name: str = kwargs.get("name", "")
-        self.vekn: str = kwargs.get("vekn", "")
-        self.discord: hikari.Snowflake = hikari.Snowflake(kwargs.get("discord") or 0)
-        self.number: int = kwargs.get("number", 0)
-        self.deck: dict = kwargs.get("deck", {})
-        self.playing: bool = kwargs.get("playing", False)
-        self.seed: int = kwargs.get("seed", 0)
-
-    def to_json(self) -> dict:
-        return {
-            "name": self.name,
-            "vekn": self.vekn,
-            "discord": self.discord,
-            "number": self.number,
-            "deck": self.deck,
-            "playing": self.playing,
-            "seed": self.seed,
-        }
-
-    def __hash__(self) -> int:
-        return hash(self.vekn)
-
-    def __eq__(self, rhs):
-        return self.vekn == rhs.vekn
+    vekn: str = field(compare=True)
+    name: str = field(default="", compare=False)
+    deck: dict = field(default_factory=dict, compare=False)
+    playing: bool = field(default=False, compare=False)
+    seed: int = field(default=0, compare=False)
 
     def __str__(self):
         s = f"#{self.vekn}"
         if self.name:
             s = f"{self.name} " + s
-        if self.discord:
-            s += f" <@{self.discord}>"
         return s
 
 
-PlayerID = Union[str, hikari.Snowflake, int]
+@dataclass
+class Round:
+    seating: krcg.seating.Round = field(default_factory=krcg.seating.Round)
+    results: Dict[str, Score] = field(default_factory=dict)
+    overrides: Dict[int, Note] = field(default_factory=dict)
+    finals: bool = False
+
+    def score(self) -> List[int]:
+        """Returns the list of incorrect tables"""
+        incorrect = []
+        if not self.seating:
+            return
+        for table_num in range(1, self.seating.tables_count + 1):
+            if not self.score_table(table_num):
+                incorrect.append(table_num)
+        return incorrect
+
+    def score_player(self, player: Player) -> bool:
+        """Returns True if the player's table score is correct/complete"""
+        if not self.seating:
+            return
+        for table_num, table in enumerate(self.seating.tables_count, 1):
+            if player.vekn in table:
+                return self.score_table(round, table_num)
+
+    def score_table(self, table_num: int) -> bool:
+        """Returns True if the table score is correct/complete"""
+        table = self.seating[table_num - 1]
+        tps = [12, 24, 36, 48, 60]
+        if len(table) == 4:
+            tps.pop(2)
+        vps = sorted([self.results.get(number, Score()).vp, number] for number in table)
+        for vp, players in itertools.groupby(vps, lambda a: a[0]):
+            players = list(players)
+            tp = sum(tps.pop(0) for _ in range(len(players))) // len(players)
+            gw = 1 if tp == 60 and vp >= 2 else 0
+            for _, number in players:
+                self.results[number] = Score(gw=gw, vp=vp, tp=tp)
+        if table_num not in self.overrides:
+            if sum(math.ceil(a[0]) for a in vps) != len(table):
+                return False
+            if not self.finals:
+                vps = [self.results.get(number, Score()).vp for number in table]
+                for j, score in enumerate(vps):
+                    if score % 1 and vps[j - 1] >= 1:
+                        return False
+        return True
+
+
 Rank = Tuple[int, str, Score]
 
 
-class PlayerDict(dict):
-    """Dictionnary of players.
+async def _check_vekn(vekn: str) -> str:
+    logger.info("Checking VEKN# %s", vekn)
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            "https://www.vekn.net/api/vekn/login",
+            data={"username": VEKN_LOGIN, "password": VEKN_PASSWORD},
+        ) as response:
+            result = await response.json()
+            try:
+                token = result["data"]["auth"]
+            except:  # noqa: E722
+                token = None
+        if not token:
+            raise CommandFailed("Unable to authentify to VEKN")
 
-    TODO: compose instead, serialize next_number to avoid acrobatics (breaking change)
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.count = 0
-        self.next_number = 1
-
-    def add(self, player: Player):
-        if not player.vekn:
-            return
-        if player.discord:
-            self[player.discord] = player
-        if player.vekn in self:
-            return
-        self[player.vekn] = player
-        player.number = self.next_number
-        self[player.number] = player
-        self.count += 1
-        self.next_number += 1
-
-    def remove(self, player_id: PlayerID):
-        if not player_id:
-            return
-        number = self[player_id].number
-        discord = self[player_id].discord
-        vekn = self[player_id].vekn
-        del self[vekn]
-        del self[number]
-        if discord:
-            del self[discord]
-        self.count -= 1
-        # next_number must not be decreased
-
-    def iter_players(self) -> Generator[Player, None, None]:
-        for k, v in self.items():
-            if isinstance(k, str):
-                yield v
+        async with session.get(
+            f"https://www.vekn.net/api/vekn/registry?filter={vekn}",
+            headers={"Authorization": f"Bearer {token}"},
+        ) as response:
+            result = await response.json()
+            result = result["data"]
+            if isinstance(result, str):
+                raise CommandFailed(f"VEKN returned an error: {result}")
+            result = result["players"]
+            if len(result) > 1:
+                raise CommandFailed("Incomplete VEKN ID#")
+            if len(result) < 1:
+                raise CommandFailed("VEKN ID# not found")
+            result = result[0]
+            if result["veknid"] != str(vekn):
+                raise CommandFailed("VEKN ID# not found")
+            return result["firstname"] + " " + result["lastname"]
 
 
+@dataclass
+class PlayerInfo:
+    """Comprehensive player information"""
+
+    player: Player
+    status: PlayerStatus
+    rounds: int = 0
+    score: Score = field(default_factory=Score)
+    notes: list[Note] = field(default_factory=list)
+    table: Optional[int] = None
+    position: Optional[int] = None
+
+
+@dataclass
 class Tournament:
     """Tournament data and base methods"""
 
-    # Keys for roles
-    JUDGE = "JUDGE"
-    SPECTATOR = "SPECTATOR"
-    PLAYER = "PLAYER"
-
-    # Keys for channels
-    JUDGE_TEXT = "JUDGES-TEXT"
-    JUDGE_VOICE = "JUDGES-VOICE"
-
-    def __init__(self, **kwargs):
-        self.name: str = kwargs.get("name", "")
-        self.flags: TournamentFlag = TournamentFlag(kwargs.get("flags", 0))
-        self.extra: dict = kwargs.get("extra", {})
-        self.max_rounds: int = kwargs.get("max_rounds", 0)
-        self.current_round: int = kwargs.get("current_round", 0)
-        # TODO use _state and replace access with a property
-        self.state: TournamentState = TournamentState(
-            kwargs.get("state", TournamentState.REGISTRATION)
-        )
-        self.players: PlayerDict = PlayerDict()
-        for p in kwargs.get("players", []):
-            self.players.add(Player(**p))
-        self.players.next_number = kwargs.get(
-            "next_number",
-            max([p.number for p in self.players.iter_players()] + [0]) + 1,
-        )
-        self.dropped: Dict[str, DropReason] = {
-            k: DropReason(v) for k, v in kwargs.get("dropped", {}).items()
-        }
-        self.rounds: List[Round] = [Round(**r) for r in kwargs.get("rounds", [])]
-        self.notes: Dict[str, List[Note]] = {
-            k: [Note(**x) for x in v] for k, v in kwargs.get("notes", {}).items()
-        }
-        self.winner: str = kwargs.get("winner", "")
+    name: str = ""
+    flags: TournamentFlag = 0
+    max_rounds: int = 0
+    current_round: int = 0
+    state: TournamentState = TournamentState.REGISTRATION
+    players: dict[str, Player] = field(default_factory=dict)
+    dropped: dict[str, DropReason] = field(default_factory=dict)
+    rounds: list[Round] = field(default_factory=list)
+    notes: dict[str, list[Note]] = field(default_factory=dict)
+    winner: str = ""
+    extra: dict = field(default_factory=dict)
 
     def __bool__(self):
         return bool(self.name)
-
-    def to_json(self):
-        return {
-            "name": self.name,
-            "flags": self.flags,
-            "extra": self.extra,  # additional data (eg. HMI like Discord ids)
-            "max_rounds": self.max_rounds,
-            "current_round": self.current_round,
-            "state": self.state,
-            "players": [p.to_json() for p in self.players.iter_players()],
-            "next_number": self.players.next_number,
-            "dropped": self.dropped,
-            "rounds": [r.to_json() for r in self.rounds],
-            "notes": {k: [n.to_json() for n in v] for k, v in self.notes.items()},
-            "winner": self.winner,
-        }
 
     async def add_player(
         self,
         vekn: Optional[str] = None,
         name: Optional[str] = None,
-        discord: hikari.Snowflakeish = 0,
         deck: Optional[krcg.deck.Deck] = None,
         judge: bool = False,
     ) -> Player:
@@ -328,9 +251,7 @@ class Tournament:
         # or if a VEKN is not required for this tournament (ie. unsanctioned)
         temp_vekn = False
         if not vekn:
-            if discord and discord in self.players:
-                vekn = self.players[discord].vekn
-            elif self.flags & TournamentFlag.VEKN_REQUIRED and not judge:
+            if self.flags & TournamentFlag.VEKN_REQUIRED and not judge:
                 raise CommandFailed(
                     "Only a judge can register a player without VEKN ID#"
                 )
@@ -342,8 +263,8 @@ class Tournament:
         # make sure not to overwrite a previous registration with the same VEKN ID
         # only a judge can override a previous vekn use
         # except if the previous player has dropped
-        vekn = str(vekn)  # ensure string so it does not collide with player.number
-        if vekn[0] == "#":
+        vekn = str(vekn)  # ensure string
+        if vekn[0] == "#":  # remove spurious prefix if any
             vekn = vekn[1:]
         if vekn in self.players:
             if vekn in self.dropped:
@@ -352,14 +273,6 @@ class Tournament:
                         "Player was disqualified: only a judge can reinstate them"
                     )
                 del self.dropped[vekn]
-            if (
-                discord
-                and self.players[vekn].discord
-                and self.players[vekn].discord != discord
-            ):
-                raise CommandFailed(
-                    "Another player has already registered with this ID"
-                )
         else:
             if self.flags & TournamentFlag.STAGGERED:
                 raise CommandFailed(
@@ -399,8 +312,6 @@ class Tournament:
             player = self.players[vekn]
             if name:
                 player.name = name
-            if discord:
-                player.discord = discord
             if deck:
                 player.deck = deck.to_minimal_json()
             # this method can be called during a round or in between rounds,
@@ -411,21 +322,16 @@ class Tournament:
             )
         else:
             if vekn and not temp_vekn:
-                name = await self._check_vekn(vekn)
-            if discord in self.players:
-                name = name or self.players[discord].name
-                deck = deck or self.players[discord].deck
-                self.players.remove(discord)
+                name = await _check_vekn(vekn)
             player = Player(
                 vekn=vekn,
                 name=name,
-                discord=discord,
                 deck=deck.to_json() if deck else {},
                 playing=playing,
             )
             self.players.add(player)
         # check for max_rounds
-        if self.max_rounds and PlayerInfo(player.vekn, self).rounds >= self.max_rounds:
+        if self.max_rounds and self.player_rounds_played(player) >= self.max_rounds:
             raise ErrorMaxRoundReached()
         # decklist requirement on check-in
         if (
@@ -436,47 +342,14 @@ class Tournament:
             raise ErrorDecklistRequired("A decklist is required to participate")
         return player
 
-    async def _check_vekn(self, vekn: str) -> str:
-        logger.info("Checking VEKN# %s", vekn)
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://www.vekn.net/api/vekn/login",
-                data={"username": VEKN_LOGIN, "password": VEKN_PASSWORD},
-            ) as response:
-                result = await response.json()
-                try:
-                    token = result["data"]["auth"]
-                except:  # noqa: E722
-                    token = None
-            if not token:
-                raise CommandFailed("Unable to authentify to VEKN")
-
-            async with session.get(
-                f"https://www.vekn.net/api/vekn/registry?filter={vekn}",
-                headers={"Authorization": f"Bearer {token}"},
-            ) as response:
-                result = await response.json()
-                result = result["data"]
-                if isinstance(result, str):
-                    raise CommandFailed(f"VEKN returned an error: {result}")
-                result = result["players"]
-                if len(result) > 1:
-                    raise CommandFailed("Incomplete VEKN ID#")
-                if len(result) < 1:
-                    raise CommandFailed("VEKN ID# not found")
-                result = result[0]
-                if result["veknid"] != str(vekn):
-                    raise CommandFailed("VEKN ID# not found")
-                return result["firstname"] + " " + result["lastname"]
-
-    def _check_player_id(self, player_id: PlayerID) -> str:
+    def _check_player(self, player_id: str) -> str:
         if player_id not in self.players:
             raise CommandFailed("Player is not registered")
-        return self.players[player_id].vekn
+        return self.players[player_id]
 
     def drop(
         self,
-        player_id: PlayerID,
+        player_id: str,
         reason: DropReason = DropReason.DROP,
     ) -> None:
         """Remove a player from the tournament.
@@ -485,10 +358,10 @@ class Tournament:
         Voluntary drops can always come back in a later round.
         Disqualified players cannot only be reinstated by a judge.
         """
-        vekn = self._check_player_id(player_id)
+        vekn = self._check_player(player_id).vekn
         if self.dropped.get(vekn, None) == DropReason.DISQUALIFIED:
             raise CommandFailed("Player is already disqualified")
-        elif not self.rounds:
+        elif reason == DropReason.DROP and not self.rounds:
             self.players.remove(vekn)
             self.dropped.pop(vekn, None)
         else:
@@ -496,7 +369,7 @@ class Tournament:
             self.players[vekn].playing = False
 
     def _reset_checkin(self) -> None:
-        for player in self.players.iter_players():
+        for player in self.players.values():
             player.playing = False
 
     def open_checkin(self) -> None:
@@ -530,11 +403,11 @@ class Tournament:
         if self.flags & TournamentFlag.STAGGERED:
             round = self.rounds[self.current_round - 1].seating
             playing = set(round.iter_players())
-            for player in self.players.iter_players():
-                player.playing = player.number in playing
+            for player in self.players.values():
+                player.playing = player.vekn in playing
             return self.rounds[self.current_round - 1]
         # non-staggered
-        players = [p.number for p in self.players.iter_players() if p.playing]
+        players = [p.vekn for p in self.players.values() if p.playing]
         if len(players) < 4:
             raise CommandFailed("More players are required")
         if len(players) in [6, 7, 11] and not (self.flags & TournamentFlag.STAGGERED):
@@ -589,12 +462,12 @@ class Tournament:
             raise CommandFailed(
                 "The tournament has already started: staggering is not possible anymore"
             )
-        players = [p.number for p in self.players.iter_players() if p.playing]
+        players = [p.vekn for p in self.players.values() if p.playing]
         if len(players) not in [6, 7, 11]:
             raise CommandFailed(
                 "A staggered tournament requires exactly 6, 7 or 11 players"
             )
-        rounds = krcg.seating.get_rounds(len(players), rounds_count)
+        rounds = krcg.seating.get_rounds(players, rounds_count)
         rounds, score = await asgiref.sync.sync_to_async(krcg.seating.optimise)(
             rounds=self.rounds,
             iterations=ITERATIONS,
@@ -621,7 +494,7 @@ class Tournament:
         self.rounds = []
         self.flags ^= TournamentFlag.STAGGERED
 
-    def round_add(self, player_id: PlayerID, table_num: int) -> None:
+    def round_add(self, player_id: str, table_num: int) -> None:
         """Add a player to the given table in current round.
 
         A convenience feature to add a late incoming player to a tournament,
@@ -630,10 +503,8 @@ class Tournament:
         if self.flags & TournamentFlag.STAGGERED:
             raise CommandFailed("Cannot add a player in a staggered tournament")
         if player_id not in self.players:
-            raise CommandFailed("User is not registered")
-        player = self.players[player_id]
-        # if not player.playing:
-        #     raise CommandFailed("User is not playing this round")
+            raise CommandFailed("Player is not registered")
+        player = self._check_player(player_id)
         if not self.rounds:
             raise CommandFailed("No round in progress")
         if table_num > len(self.rounds[-1].seating) or table_num < 1:
@@ -641,16 +512,16 @@ class Tournament:
         table = self.rounds[-1].seating[table_num - 1]
         if len(table) > 4:
             raise CommandFailed("Table has 5 players already")
-        if self.max_rounds and PlayerInfo(player.vekn, self).rounds >= self.max_rounds:
+        if self.max_rounds and self.player_rounds_played(player) >= self.max_rounds:
             raise ErrorMaxRoundReached()
-        table.append(player.number)
+        table.append(player.vekn)
         player.playing = True
         # if this is not first round, optimise the score
         # and make sure we don't repeat a predator-prey relation
         if len(self.rounds) > 1:
-            self._optimise_table(table_num)
+            krcg.seating.optimise_table(self.rounds, table_num - 1)
 
-    def round_remove(self, player_id: PlayerID) -> int:
+    def round_remove(self, player_id: str) -> int:
         """Remove a player from current round, returns the table number.
 
         A convenience feature to remove a late player from a round before starting,
@@ -662,57 +533,31 @@ class Tournament:
         """
         if self.flags & TournamentFlag.STAGGERED:
             raise CommandFailed("Cannot remove a player from a staggered tournament")
-        if player_id not in self.players:
-            raise CommandFailed("User is not registered")
-        player = self.players[player_id]
+        player = self._check_player(player_id)
         if not self.rounds:
             raise CommandFailed("No round in progress")
         for table_num, _, _, p in self.rounds[-1].seating.iter_table_players():
-            if player.number == p:
+            if player.vekn == p:
                 break
         else:
             raise CommandFailed("User is not playing this round")
         table = self.rounds[-1].seating[table_num - 1]
         if len(table) < 5:
             raise CommandFailed("Table has only 4 players, unable to remove one.")
-        table.remove(player.number)
+        table.remove(player.vekn)
         player.playing = False
         # if this is not first round, optimise the score
         # and make sure we don't repeat a predator-prey relation
         if len(self.rounds) > 1:
-            self._optimise_table(table_num)
+            krcg.seating.optimise_table(self.rounds, table_num - 1)
         return table_num
-
-    def _optimise_table(self, table_num: int):
-        """For round add/remove: optimise the modified table seating score."""
-        max_number = max(
-            player_num
-            for player_num in itertools.chain.from_iterable(
-                r.seating.iter_players() for r in self.rounds
-            )
-        )
-        base = sum(
-            krcg.seating.measure(max_number, r.seating) for r in self.rounds[:-1]
-        )
-        table = self.rounds[-1].seating[table_num - 1]
-        best_table = table
-        best_score = math.inf
-        # max 120 possibilities, we check them all for the best score
-        for new_table in itertools.permutations(table):
-            self.rounds[-1].seating[table_num - 1] = new_table
-            measure = krcg.seating.measure(max_number, self.rounds[-1].seating)
-            new_score = krcg.seating.Score.fast_total(base + measure)
-            if new_score < best_score:
-                best_score = new_score
-                best_table = new_table
-        self.rounds[-1].seating[table_num - 1] = best_table
 
     def finish_round(self, keep_checkin=False) -> Round:
         """Mark the round as finished. Score gets frozen."""
         if not self.rounds or self.state != TournamentState.PLAYING:
             raise CommandFailed("No round in progress")
-        self.rounds[-1].score()
-        incorrect = self.rounds[-1].incorrect
+        incorrect = self.rounds[-1].score()
+
         if len(incorrect) > 1:
             raise CommandFailed(f"Incorrect score for tables {incorrect}")
         if len(incorrect) > 0:
@@ -727,10 +572,10 @@ class Tournament:
                 self._reset_checkin()
                 self.state = TournamentState.WAITING_FOR_CHECKIN
             else:
-                for player in self.players.iter_players():
+                for player in self.players.values():
                     if (
                         self.max_rounds
-                        and PlayerInfo(player.vekn, self).rounds >= self.max_rounds
+                        and self.player_rounds_played(player) >= self.max_rounds
                     ):
                         player.playing = False
         return self.rounds[-1]
@@ -760,40 +605,36 @@ class Tournament:
             return len(self.rounds)
         if round_number < 1:
             raise CommandFailed(f"Invalid round number {round_number}")
-        if round_number >= len(self.rounds):
+        if round_number > len(self.rounds):
             raise CommandFailed(f"Round {round_number} has yet to be played")
         return round_number
 
     def tables_count(self, round_number: Optional[int] = None):
         round_number = self._check_round_number(round_number)
-        if round_number < 1:
-            return 0
         return len(self.rounds[round_number - 1].seating)
 
     def report(
         self,
-        player_id: PlayerID,
+        player_id: str,
         vps: float = 0,
         round_number: Optional[int] = None,
-    ) -> None:
-        """Report the number of VPs scored.
+    ) -> bool:
+        """Report the number of VPs scored. Returns True if the table score is complete.
 
         round_number defaults to the current round.
         """
         round_number = self._check_round_number(round_number)
-        try:
-            player = self.players[player_id]
-        except KeyError:
-            raise CommandFailed("Player is not registers")
+        player = self._check_player(player_id)
         round = self.rounds[round_number - 1]
-        if player.number not in set(round.seating.iter_players()):
+        if player.vekn not in set(round.seating.iter_players()):
             raise CommandFailed("Player was not playing in that round")
         # do not let disqualified players enter VPs even if they were playing the round
         if self.dropped.get(player.vekn, None) == DropReason.DISQUALIFIED:
             raise CommandFailed("Player has been disqualified")
         if vps not in {0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5}:
             raise CommandFailed("VPs must be between 0 and 5")
-        round.results[player.number] = Score(vp=vps)
+        round.results[player.vekn] = Score(vp=vps)
+        return round.score_player(player)
 
     def standings(self, toss=False) -> Tuple[Optional[str], List[Rank]]:
         """Return the winner (if any) and a full ranking [(rank, vekn, score)]
@@ -808,15 +649,15 @@ class Tournament:
             self.rounds[: -1 if self.state == TournamentState.PLAYING else None], 1
         ):
             # check scores again, some VPs fixes might have happened
-            round.score()
-            if round.incorrect:
-                if len(round.incorrect) > 1:
+            incorrect = round.score()
+            if incorrect:
+                if len(incorrect) > 1:
                     raise CommandFailed(
-                        f"Incorrect score for tables {round.incorrect} in round {i}"
+                        f"Incorrect score for tables {incorrect} in round {i}"
                     )
-                if len(round.incorrect) > 0:
+                if len(incorrect) > 0:
                     raise CommandFailed(
-                        f"Incorrect score for table {round.incorrect[0]} in round {i}"
+                        f"Incorrect score for table {incorrect[0]} in round {i}"
                     )
             if round.finals and round.results:
                 winner = max(
@@ -828,16 +669,16 @@ class Tournament:
                 round.results[winner].gw = 1
         totals = collections.defaultdict(Score)
         for round in self.rounds:
-            for number, score in round.results.items():
-                totals[number] += score
+            for vekn, score in round.results.items():
+                totals[vekn] += score
         ranking = []
         last = Score()
         rank = 1
-        for j, (number, score) in enumerate(
+        for j, (vekn, score) in enumerate(
             sorted(
                 totals.items(),
                 key=lambda a: (
-                    self.players[a[0]].vekn not in self.dropped,
+                    a[0] not in self.dropped,
                     winner == a[0],
                     a[1],
                     # put the seed here, so if you win the toss once, you keep your win
@@ -850,7 +691,6 @@ class Tournament:
             ),
             1,
         ):
-            vekn = self.players[number].vekn
             if vekn not in self.dropped:
                 if winner and 1 < j < 6:
                     rank = 2
@@ -866,13 +706,13 @@ class Tournament:
 
     def start_finals(self) -> Round:
         _, ranking = self.standings(toss=True)  # toss for finals seats if necessary
-        top_5 = [self.players[vekn].number for (_rank, vekn, _score) in ranking[:5]]
-        for p in self.players.iter_players():
+        top_5 = [vekn for (_rank, vekn, _score) in ranking[:5]]
+        for p in self.players.values():
             p.seed = 0
             p.playing = False
-        for i, number in enumerate(top_5, 1):
-            self.players[number].seed = i
-            self.players[number].playing = True
+        for i, vekn in enumerate(top_5, 1):
+            self.players[vekn].seed = i
+            self.players[vekn].playing = True
         # note register "seating" for finals is in fact seeding order
         # actual seating is not (yet) recorded
         self.current_round += 1
@@ -893,8 +733,8 @@ class Tournament:
 
     def note(
         self,
-        player_id: PlayerID,
-        judge: hikari.Snowflake,
+        player_id: str,
+        judge: str,
         level: NoteLevel,
         comment: str,
     ) -> None:
@@ -903,11 +743,11 @@ class Tournament:
         Repeated NoteLevel.CAUTION should lead to a WARNING,
         Repeated NoteLevel.WARNING should lead to a disqualification (cf. drop())
         """
-        vekn = self._check_player_id(player_id)
+        vekn = self._check_player(player_id).vekn
         self.notes.setdefault(vekn, [])
         self.notes[vekn].append(
             Note(
-                judge=judge,
+                judge=str(judge),  # enforce str
                 level=level,
                 text=comment,
             )
@@ -916,7 +756,7 @@ class Tournament:
     def validate_score(
         self,
         table_number: int,
-        judge: hikari.Snowflake,
+        judge: str,
         comment: str,
         round_number: Optional[int] = None,
     ) -> None:
@@ -933,79 +773,70 @@ class Tournament:
             level=NoteLevel.OVERRIDE, judge=judge, text=comment
         )
 
-    def player_info(self, vekn_or_discord: PlayerID, current_score: bool = False):
-        """Returns a player information (PlayerInfo instance)"""
-        vekn = self._check_player_id(vekn_or_discord)
-        return PlayerInfo(vekn, self, current_score)
-
-
-class PlayerInfo:
-    player = None
-    table = None
-    position = None
-    rounds = None
-    score = None
-    status = None
-    drop = None
-    notes = None
-
-    def __init__(self, vekn: str, tournament: Tournament, current: bool = False):
-        self.player = tournament.players[vekn]
-        self.drop = tournament.dropped.get(vekn, None)
-        self.notes = tournament.notes.get(vekn, [])
-        if self.drop and self.drop == DropReason.DISQUALIFIED:
-            self.status = PlayerStatus.DISQUALIFIED
-        else:
-            if (
-                not self.player.deck
-                and tournament.flags & TournamentFlag.DECKLIST_REQUIRED
-            ):
-                self.status = PlayerStatus.MISSING_DECK
-            elif tournament.state == TournamentState.REGISTRATION:
-                self.status = PlayerStatus.WAITING
-            elif tournament.state == TournamentState.WAITING_FOR_CHECKIN:
-                self.status = PlayerStatus.WAITING
-            elif tournament.state == TournamentState.WAITING_FOR_START:
-                if self.player.playing:
-                    self.status = PlayerStatus.CHECKED_IN
-                else:
-                    self.status = PlayerStatus.CHECKED_OUT
-            elif tournament.state == TournamentState.CHECKIN:
-                if self.player.playing:
-                    self.status = PlayerStatus.CHECKED_IN
-                else:
-                    self.status = PlayerStatus.CHECKIN_REQUIRED
-            elif tournament.state == TournamentState.FINISHED:
-                self.status = PlayerStatus.WAITING
-            # round in progress
+    def player_status(self, player_id: str):
+        if player_id not in self.players:
+            return PlayerStatus.NOT_REGISTERED
+        player = self.players[player_id]
+        drop = self.dropped.get(self.player.vekn, None)
+        if drop == DropReason.DROP:
+            return PlayerStatus.DROPPED_OUT
+        elif drop == DropReason.DISQUALIFIED:
+            return PlayerStatus.DISQUALIFIED
+        elif drop:
+            raise RuntimeError("unknown drop reason")
+        if not player.deck and self.flags & TournamentFlag.DECKLIST_REQUIRED:
+            return PlayerStatus.MISSING_DECK
+        if self.state in [
+            TournamentState.REGISTRATION,
+            TournamentState.WAITING_FOR_CHECKIN,
+        ]:
+            return PlayerStatus.WAITING
+        if self.state == TournamentState.CHECKIN:
+            if player.playing:
+                return PlayerStatus.CHECKED_IN
             else:
-                if self.player.playing:
-                    self.status = PlayerStatus.PLAYING
-                else:  # player has a deck but is not playing
-                    self.status = PlayerStatus.CHECKED_OUT
-        self.score = Score()
-        self.rounds = 0
-        for i, round in enumerate(tournament.rounds, 1):
-            if self.player.number in round.seating.iter_players():
-                self.rounds += 1
-                if i == tournament.current_round:
-                    for (
-                        table,
-                        position,
-                        _size,
-                        player,
-                    ) in round.seating.iter_table_players():
-                        if player == self.player.number:
-                            self.table = table
-                            self.position = position
-                            # if not specified, do not include current round in score
-                            if not current:
-                                break
-            self.score += round.results.get(self.player.number, Score())
+                return PlayerStatus.CHECKIN_REQUIRED
+        if self.state == TournamentState.WAITING_FOR_START:
+            if player.playing:
+                return PlayerStatus.CHECKED_IN
+            else:
+                return PlayerStatus.CHECKED_OUT
+        if self.state == TournamentState.FINISHED:
+            return PlayerStatus.WAITING
+        if self.state == TournamentState.PLAYING:
+            if player.playing:
+                return PlayerStatus.PLAYING
+            else:
+                return PlayerStatus.CHECKED_OUT
 
-    def __str__(self):
-        return (
-            f"player: {self.player}, table: {self.table}, position: {self.position}, "
-            f"rounds: {self.rounds}, score: {self.score}, status: {self.status}, "
-            f"drop: {self.drop}, notes: {self.notes}"
+    def player_rounds_played(self, player_id: str):
+        ret = 0
+        for round in self.rounds:
+            if player_id in round.seating.iter_players():
+                ret += 1
+        return ret
+
+    def player_score(self, player_id: str):
+        ret = Score()
+        for round in self.rounds:
+            ret += round.results.get(player_id, Score())
+        return ret
+
+    def player_info(self, player_id: str) -> PlayerInfo:
+        """Returns a player information"""
+        player = self._check_player(player_id)
+        ret = PlayerInfo(
+            player,
+            status=self.player_status(player_id),
+            rounds=self.player_rounds_played(player_id),
+            score=self.player_score(player_id),
+            notes=self.notes.get(player_id, []),
         )
+        if self.rounds:
+            self.rounds[-1]
+            for table, position, _size, player in round.seating.iter_table_players():
+                if player == self.player.vekn:
+                    ret.table = table
+                    ret.position = position
+                    break
+        return ret

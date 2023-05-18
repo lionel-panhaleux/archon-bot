@@ -345,13 +345,13 @@ class BaseInteraction:
             **kwargs,
         )
 
-    def update(self) -> None:
+    async def update(self) -> None:
         """Update tournament data."""
         if self.UPDATE < db.UpdateLevel.WRITE:
             raise RuntimeError("Command is not marked as UPDATE")
         self.tournament.extra["discord"] = asdict(self.discord)
         data = asdict(self.tournament)
-        db.update_tournament(
+        await db.update_tournament(
             self.connection,
             self.guild_id,
             self.category_id,
@@ -876,7 +876,7 @@ class OpenTournament(BaseCommand):
         self.author.role_ids.append(self.discord.roles[Role.JUDGE].id)
         logger.debug("Register tournament in DB...")
         self.tournament.extra["discord"] = asdict(self.discord)
-        db.create_tournament(
+        await db.create_tournament(
             self.connection,
             self.guild_id,
             self.category_id,
@@ -921,7 +921,7 @@ class ConfigureTournament(BaseCommand):
                     self.tournament.flags ^= tournament.TournamentFlag.STAGGERED
                 else:
                     self.tournament.make_staggered()
-        self.update()
+        await self.update()
         vekn_required = self.tournament.flags & tournament.TournamentFlag.VEKN_REQUIRED
         decklist_required = (
             self.tournament.flags & tournament.TournamentFlag.DECKLIST_REQUIRED
@@ -1079,7 +1079,7 @@ class SetMaxRounds(BaseCommand):
 
     async def __call__(self, rounds_count: int) -> None:
         self.tournament.max_rounds = rounds_count
-        self.update()
+        await self.update()
         await self.create_or_edit_response(
             embed=hikari.Embed(
                 title=f"Max rounds set: {rounds_count}",
@@ -1194,8 +1194,8 @@ class CloseTournament(BaseCommand):
             )
             self.discord.channels.clear()
             self.discord.roles.clear()
-            self.update()
-            db.close_tournament(self.connection, self.guild_id, self.category_id)
+            await self.update()
+            await db.close_tournament(self.connection, self.guild_id, self.category_id)
             COMPONENTS.pop("confirm-close", None)
             if any(isinstance(r, (hikari.ClientHTTPResponseError)) for r in results):
                 logger.error("Errors closing tournament: %s", results)
@@ -1322,7 +1322,7 @@ class Register(BaseCommand):
                 "using the `checkin` command before the next round begins."
             )
         description += f"\n\nUse {Status.mention()} anytime to check your status."
-        self.update()
+        await self.update()
         await self.create_or_edit_response(
             embed=hikari.Embed(
                 title="Registered",
@@ -1405,7 +1405,7 @@ class RegisterPlayer(BaseCommand):
                 self.discord.roles[Role.PLAYER].id,
                 reason=self.reason,
             )
-        self.update()
+        await self.update()
         player_display = self._player_display(player.vekn)
         description = f"{player_display} is successfully registered for the tournament."
         if player.playing:
@@ -1457,7 +1457,7 @@ class OpenCheckIn(BaseCommand):
 
     async def __call__(self) -> None:
         self.tournament.open_checkin()
-        self.update()
+        await self.update()
         await self.create_or_edit_response("Check-in is open")
 
 
@@ -1478,7 +1478,7 @@ class Drop(BaseCommand):
             reason=self.reason,
         )
         self.tournament.drop(vekn)
-        self.update()
+        await self.update()
         await self.create_or_edit_response(
             "Dropped",
             flags=hikari.MessageFlag.EPHEMERAL,
@@ -1518,7 +1518,7 @@ class DropPlayer(BaseCommand):
                 reason=self.reason,
             )
         self.tournament.drop(vekn)
-        self.update()
+        await self.update()
         await self.create_or_edit_response("Dropped")  # cannot display them anymore
 
 
@@ -1565,7 +1565,7 @@ class Disqualify(BaseCommand):
             self.tournament.note(
                 vekn, self.author.id, tournament.NoteLevel.WARNING, note
             )
-        self.update()
+        await self.update()
         await self.create_or_edit_response(
             f"{player_display} Disqualified",
             user_mentions=[user] if user else [],
@@ -1786,7 +1786,7 @@ class Round(BaseCommand):
         )
         await self._align_roles()
         await self._align_channels()
-        self.update()
+        await self.update()
         await asyncio.gather(
             *(self._display_seating(i + 1) for i in range(round.seating.tables_count()))
         )
@@ -1818,7 +1818,7 @@ class Round(BaseCommand):
         await self.deferred()
         round = self.tournament.finish_round(keep_checkin)
         await self._delete_round_tables(round.finals)
-        self.update()
+        await self.update()
         await self.create_or_edit_response("Round finished")
 
     async def reset(self) -> None:
@@ -1826,7 +1826,7 @@ class Round(BaseCommand):
         await self.deferred()
         round = self.tournament.reset_round()
         await self._delete_round_tables(round.finals)
-        self.update()
+        await self.update()
         await self.create_or_edit_response("Round reset")
 
     async def add(
@@ -1847,7 +1847,7 @@ class Round(BaseCommand):
                 reason=self.reason,
             )
         await self._display_seating(table)
-        self.update()
+        await self.update()
         await self.create_or_edit_response(f"Player added to table {table}")
 
     async def remove(
@@ -1865,7 +1865,7 @@ class Round(BaseCommand):
                 reason=self.reason,
             )
         await self._display_seating(table)
-        self.update()
+        await self.update()
         await self.create_or_edit_response(f"Player removed from table {table}")
 
 
@@ -1888,7 +1888,7 @@ class Finals(BaseCommand):
         )
         await self._align_roles()
         await self._align_channels()
-        self.update()
+        await self.update()
         seeding_embed = hikari.Embed(
             title="Finals seeding",
             description="\n".join(
@@ -1927,7 +1927,7 @@ class Report(BaseCommand):
             raise CommandFailed("Scores can only be reported when a round is ongoing")
         vekn = self.discord.get_vekn(self.author.id)
         self.tournament.report(vekn, vp)
-        self.update()
+        await self.update()
         info = self.tournament.player_info(vekn)
         if not info.table:
             return
@@ -1992,7 +1992,7 @@ class FixReport(BaseCommand):
     ) -> None:
         vekn = vekn or self.discord.get_vekn(user)
         self.tournament.report(vekn, vp, round)
-        self.update()
+        await self.update()
         await self.create_or_edit_response(
             content=(f"Result registered: {vp} VPs for {self._player_display(vekn)}"),
             flags=hikari.UNDEFINED
@@ -2050,7 +2050,7 @@ class ValidateScore(BaseCommand):
         self, table: int, note: str, round: Optional[int] = None
     ) -> None:
         self.tournament.validate_score(table, self.author.id, note, round)
-        self.update()
+        await self.update()
         await self.create_or_edit_response(
             content=f"Score validated for table {table}: {note}",
             flags=hikari.UNDEFINED
@@ -2278,7 +2278,7 @@ class Note(BaseCommand):
                         self.discord.roles[Role.PLAYER].id,
                         reason=self.reason,
                     )
-            self.update()
+            await self.update()
             if self.level == tournament.NoteLevel.NOTE:
                 await self.create_or_edit_response(
                     embed=hikari.Embed(title="Note taken", description=self.note),
@@ -3284,7 +3284,7 @@ class ResetChannelsAndRoles(BaseCommand):
         await self.deferred()
         await self._align_roles()
         await self._align_channels()
-        self.update()
+        await self.update()
         embed = hikari.Embed(
             title="Channels reset",
             description="Channels have been realigned.",

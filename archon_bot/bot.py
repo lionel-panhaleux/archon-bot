@@ -16,6 +16,7 @@ from .commands import (
 )
 
 from . import db
+from . import serialize
 from .tournament import Tournament
 
 
@@ -40,7 +41,7 @@ krcg.vtes.VTES.load()
 async def on_ready(event: hikari.StartedEvent) -> None:
     """Login success informative log."""
     logger.info("Ready as %s", bot.get_me().username)
-    await db.init()
+    await db.init(reset=RESET)
     if not APPLICATION:
         APPLICATION.append(await bot.rest.fetch_application())
     application = APPLICATION[-1]
@@ -69,8 +70,6 @@ async def on_ready(event: hikari.StartedEvent) -> None:
             COMMANDS[command.id] = COMMANDS_TO_REGISTER[command.name]
         except KeyError:
             logger.exception("Received unknow command %s", command)
-    if RESET:
-        await db.reset()
 
 
 @bot.listen()
@@ -158,7 +157,7 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
                 instance = command(
                     bot,
                     connection,
-                    Tournament(**tournament_data) if tournament_data else None,
+                    serialize.loadd(tournament_data or {}, Tournament),
                     event.interaction,
                     channel.id,
                     channel.parent_id,
@@ -202,7 +201,7 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
                 instance = component_function(
                     bot,
                     connection,
-                    Tournament(**tournament_data) if tournament_data else None,
+                    serialize.loadd(tournament_data or {}, Tournament),
                     event.interaction,
                     channel.id,
                     channel.parent_id,

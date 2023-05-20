@@ -8,7 +8,7 @@ import io
 import json
 import logging
 import random
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import Iterable, List, Optional, Union
 
 
@@ -27,6 +27,7 @@ import stringcase
 from . import db
 from . import tournament
 from . import permissions as perm
+from . import serialize
 
 logger = logging.getLogger()
 CommandFailed = tournament.CommandFailed
@@ -197,7 +198,7 @@ class DiscordExtra:
     judges: list[hikari.Snowflake] = field(default_factory=list)
     spectators: list[hikari.Snowflake] = field(default_factory=list)
     roles: dict[str, DiscordRole] = field(default_factory=dict)
-    channels: dict[str, dict[Role, DiscordChannel]] = field(default_factory=dict)
+    channels: dict[str, dict[str, DiscordChannel]] = field(default_factory=dict)
 
     def get_vekn(self, discord_id: hikari.Snowflake) -> str:
         return self.players.get(discord_id, None)
@@ -249,18 +250,18 @@ class DiscordExtra:
         return name
 
     def get_judge_text_channel(self):
-        return self.channels["TEXT"][Role.JUDGE]
+        return self.channels["TEXT"][Role.JUDGE.value]
 
     def set_judge_text_channel(self, channel: DiscordChannel):
         self.channels.setdefault("TEXT", {})
-        self.channels["TEXT"][Role.JUDGE] = channel
+        self.channels["TEXT"][Role.JUDGE.value] = channel
 
     def get_judge_voice_channel(self):
-        return self.channels["VOICE"][Role.JUDGE]
+        return self.channels["VOICE"][Role.JUDGE.value]
 
     def set_judge_voice_channel(self, channel: DiscordChannel):
         self.channels.setdefault("VOICE", {})
-        self.channels["VOICE"][Role.JUDGE] = channel
+        self.channels["VOICE"][Role.JUDGE.value] = channel
 
     def get_table_text_channel(self, table_num: int):
         return self.channels["TEXT"][str(table_num)]
@@ -290,10 +291,10 @@ class BaseInteraction:
     """Base class for all interactions (commands and components)"""
 
     #: The interaction update mode (conditions DB lock)
-    UPDATE = db.UpdateLevel.READ_ONLY
+    UPDATE: db.UpdateLevel = db.UpdateLevel.READ_ONLY
     #: The interaction requires an open tournament (most of them except open)
-    REQUIRES_TOURNAMENT = True
-    ACCESS = CommandAccess.PUBLIC
+    REQUIRES_TOURNAMENT: bool = True
+    ACCESS: CommandAccess = CommandAccess.PUBLIC
 
     def __init__(
         self,
@@ -306,17 +307,19 @@ class BaseInteraction:
         interaction_context: Optional[InteractionContext] = None,
     ):
         self.bot: hikari.GatewayBot = bot
-        self.connection = connection
+        self.connection: db.psycopg.AsyncConnection = connection
         self.interaction: Union[CommandInteraction, ComponentInteraction] = interaction
         self.channel_id: hikari.Snowflake = channel_id
         self.author: hikari.InteractionMember = self.interaction.member
         self.guild_id: hikari.Snowflake = self.interaction.guild_id
         self.category_id: hikari.Snowflake = category_id
         self.tournament: tournament.Tournament = tournament_
-        discord_data = {}
         if self.tournament:
-            discord_data = self.tournament.extra.get("discord", {})
-        self.discord = DiscordExtra(**discord_data)
+            self.discord = serialize.loadd(
+                self.tournament.extra.get("discord", {}), DiscordExtra
+            )
+        else:
+            self.discord = DiscordExtra()
         self.interaction_context = interaction_context or InteractionContext()
         if self.REQUIRES_TOURNAMENT and not self.tournament:
             raise CommandFailed(
@@ -349,13 +352,12 @@ class BaseInteraction:
         """Update tournament data."""
         if self.UPDATE < db.UpdateLevel.WRITE:
             raise RuntimeError("Command is not marked as UPDATE")
-        self.tournament.extra["discord"] = asdict(self.discord)
-        data = asdict(self.tournament)
+        self.tournament.extra["discord"] = serialize.dumpd(self.discord)
         await db.update_tournament(
             self.connection,
             self.guild_id,
             self.category_id,
-            data,
+            serialize.dumpd(self.tournament),
         )
 
     def _is_judge(self) -> bool:
@@ -377,8 +379,8 @@ class BaseInteraction:
                 name[:29] + "..."
         return (
             ("**[D]** " if vekn in self.tournament.dropped else "")
-            + (f"{name} #{vekn}" if name else f"#{vekn}")
-            + (f"<@{discord_id}>" if discord_id else "")
+            + (f"{name} `#{vekn}`" if name else f"#{vekn}")
+            + (f" <@{discord_id}>" if discord_id else "")
         )
 
     def _deck_display(self, data: dict) -> str:
@@ -392,7 +394,7 @@ class BaseInteraction:
         silence_exceptions: bool = False,
     ) -> None:
         # list what is expected
-        expected = [(r, self.discord.role_name(r)) for r in Role]
+        expected = [(r.value, self.discord.role_name(r)) for r in Role]
         if self.tournament.state == tournament.TournamentState.PLAYING:
             for table_num in range(1, self.tournament.tables_count() + 1):
                 expected.append(
@@ -419,7 +421,9 @@ class BaseInteraction:
             r for r in existing if r.name == self.discord.role_name(Role.ROOT_JUDGE)
         ]
         if root_judge:
-            self.discord.roles[Role.ROOT_JUDGE] = root_judge[0]
+            self.discord.roles[Role.ROOT_JUDGE.value] = DiscordRole.from_hikari(
+                root_judge[0]
+            )
         existing = [r for r in existing if r.name.startswith(self.discord.prefix + "-")]
         if existing and raise_on_exists:
             raise CommandFailed(
@@ -535,7 +539,7 @@ class BaseInteraction:
         # list what is expected
         expected = [
             (
-                ("TEXT", Role.JUDGE),
+                ("TEXT", Role.JUDGE.value),
                 self.discord.channel_name(Role.JUDGE, hikari.ChannelType.GUILD_TEXT),
                 [
                     hikari.PermissionOverwrite(
@@ -556,7 +560,7 @@ class BaseInteraction:
                 ],
             ),
             (
-                ("VOICE", Role.JUDGE),
+                ("VOICE", Role.JUDGE.value),
                 self.discord.channel_name(Role.JUDGE, hikari.ChannelType.GUILD_VOICE),
                 [
                     hikari.PermissionOverwrite(
@@ -867,7 +871,7 @@ class OpenTournament(BaseCommand):
             raise CommandFailed("A tournament is already open here")
         await self.deferred()
         logger.debug("Creating tournament...")
-        self.tournament = tournament.Tournament(name=name)
+        self.tournament.name = name
         self.discord.prefix = "".join([w[0] for w in name.split()][:3])
         self.discord.judges.append(self.author.id)
         await self._align_roles(raise_on_exists=True)
@@ -875,12 +879,12 @@ class OpenTournament(BaseCommand):
         # author is now a judge, he can configure (next step)
         self.author.role_ids.append(self.discord.roles[Role.JUDGE].id)
         logger.debug("Register tournament in DB...")
-        self.tournament.extra["discord"] = asdict(self.discord)
+        self.tournament.extra["discord"] = serialize.dumpd(self.discord)
         await db.create_tournament(
             self.connection,
             self.guild_id,
             self.category_id,
-            asdict(self.tournament),
+            serialize.dumpd(self.tournament),
         )
         # now configure the tournament
         next_step = ConfigureTournament.copy_from_interaction(self)
@@ -944,60 +948,56 @@ class ConfigureTournament(BaseCommand):
         else:
             components = [
                 self.bot.rest.build_message_action_row()
-                .add_button(
+                .add_interactive_button(
                     hikari.ButtonStyle.SECONDARY
                     if vekn_required
                     else hikari.ButtonStyle.PRIMARY,
                     "vekn-required",
+                    label="No VEKN" if vekn_required else "Require VEKN",
                 )
-                .set_label("No VEKN" if vekn_required else "Require VEKN")
-                .add_to_container()
-                .add_button(
+                .add_interactive_button(
                     hikari.ButtonStyle.SECONDARY
                     if decklist_required
                     else hikari.ButtonStyle.PRIMARY,
                     "decklist-required",
+                    label="No Decklist" if decklist_required else "Require Decklist",
                 )
-                .set_label("No Decklist" if decklist_required else "Require Decklist")
-                .add_to_container()
-                .add_button(
+                .add_interactive_button(
                     hikari.ButtonStyle.SECONDARY
                     if checkin_each_round
                     else hikari.ButtonStyle.PRIMARY,
                     "checkin-each-round",
+                    label="Checkin once"
+                    if checkin_each_round
+                    else "Checkin each round",
                 )
-                .set_label(
-                    "Checkin once" if checkin_each_round else "Checkin each round"
-                )
-                .add_to_container()
-                .add_button(
+                .add_interactive_button(
                     hikari.ButtonStyle.SECONDARY
                     if multideck
                     else hikari.ButtonStyle.PRIMARY,
                     "multideck",
+                    label="Single Deck" if multideck else "Multideck",
                 )
-                .set_label("Single Deck" if multideck else "Multideck")
-                .add_to_container()
-                .add_button(
+                .add_interactive_button(
                     hikari.ButtonStyle.SECONDARY
                     if between
                     else hikari.ButtonStyle.PRIMARY,
                     "register-between",
-                )
-                .set_label("No late joiners" if between else "Join anytime")
-                .add_to_container(),
+                    label="No late joiners" if between else "Join anytime",
+                ),
                 self.bot.rest.build_message_action_row()
-                .add_button(
+                .add_interactive_button(
                     hikari.ButtonStyle.SECONDARY
                     if staggered
                     else hikari.ButtonStyle.PRIMARY,
                     "staggered",
+                    label="Normal" if staggered else "Staggered",
                 )
-                .set_label("Normal" if staggered else "Staggered")
-                .add_to_container()
-                .add_button(hikari.ButtonStyle.SUCCESS, "validate")
-                .set_label("OK")
-                .add_to_container(),
+                .add_interactive_button(
+                    hikari.ButtonStyle.SUCCESS,
+                    "validate",
+                    label="OK",
+                ),
             ]
             COMPONENTS["vekn-required"] = ConfigureTournament
             COMPONENTS["decklist-required"] = ConfigureTournament
@@ -1107,12 +1107,12 @@ class CloseTournament(BaseCommand):
             raise CommandFailed("No tournament going on here")
         confirmation = (
             self.bot.rest.build_message_action_row()
-            .add_button(hikari.ButtonStyle.DANGER, "confirm-close")
-            .set_label("Close tournament")
-            .add_to_container()
-            .add_button(hikari.ButtonStyle.SECONDARY, "cancel-close")
-            .set_label("Cancel")
-            .add_to_container()
+            .add_interactive_button(
+                hikari.ButtonStyle.DANGER, "confirm-close", label="Close tournament"
+            )
+            .add_interactive_button(
+                hikari.ButtonStyle.SECONDARY, "cancel-close", label="Cancel"
+            )
         )
 
         COMPONENTS["confirm-close"] = CloseTournament.Confirmed
@@ -1150,8 +1150,8 @@ class CloseTournament(BaseCommand):
                 root_judge_remove = []
                 judges = await asyncio.gather(
                     *(
-                        self.bot.rest.fetch_member(self.guild_id, judge.id)
-                        for judge in self.discord.judges
+                        self.bot.rest.fetch_member(self.guild_id, judge_id)
+                        for judge_id in self.discord.judges
                     )
                 )
                 guild_roles = await self.bot.rest.fetch_roles(self.guild_id)
@@ -1286,6 +1286,7 @@ class Register(BaseCommand):
             player = await self.tournament.add_player(
                 vekn, name, deck=deck, judge=False
             )
+            self.discord.players[discord_id] = player.vekn
         except tournament.ErrorDecklistRequired:
             await self.create_or_edit_response(
                 embed=hikari.Embed(
@@ -1298,7 +1299,6 @@ class Register(BaseCommand):
                 )
             )
             return
-        self.discord.players[discord_id] = self.discord.get_vekn(discord_id)
         await self.bot.rest.add_role_to_member(
             self.guild_id,
             discord_id,
@@ -1382,13 +1382,17 @@ class RegisterPlayer(BaseCommand):
             if vekn:
                 other_discord = self.discord.get_discord_id(vekn)
                 if other_discord and other_discord != user:
-                    raise CommandFailed(
-                        "Another player has already registered with this ID"
-                    )
+                    if vekn in self.tournament.players:
+                        raise CommandFailed(
+                            "Another player has already registered with this ID: "
+                            "drop them first."
+                        )
             else:
                 vekn = self.discord.get_vekn(user)
         try:
             player = await self.tournament.add_player(vekn, name, deck=deck, judge=True)
+            if user:
+                self.discord.players[user] = player.vekn
         except tournament.ErrorDecklistRequired:
             await self.create_or_edit_response(
                 embed=hikari.Embed(
@@ -1398,7 +1402,6 @@ class RegisterPlayer(BaseCommand):
             )
             return
         if user:
-            self.discord.players[user] = self.discord.get_vekn(user)
             await self.bot.rest.add_role_to_member(
                 self.guild_id,
                 user,
@@ -1848,7 +1851,9 @@ class Round(BaseCommand):
             )
         await self._display_seating(table)
         await self.update()
-        await self.create_or_edit_response(f"Player added to table {table}")
+        await self.create_or_edit_response(
+            f"{self._player_display(vekn)} added to table {table}"
+        )
 
     async def remove(
         self, user: Optional[hikari.Snowflake] = None, vekn: Optional[str] = None
@@ -1866,7 +1871,9 @@ class Round(BaseCommand):
             )
         await self._display_seating(table)
         await self.update()
-        await self.create_or_edit_response(f"Player removed from table {table}")
+        await self.create_or_edit_response(
+            f"{self._player_display(vekn)} removed from table {table}"
+        )
 
 
 class Finals(BaseCommand):
@@ -2196,23 +2203,18 @@ class Note(BaseCommand):
 
         confirmation = self.bot.rest.build_message_action_row()
         if previous_notes:
-            confirmation = (
-                confirmation.add_button(
-                    hikari.ButtonStyle.DANGER, f"note-upgrade-{self.author.id}"
-                )
-                .set_label(f"Upgrade to {upgrade_component[1]}")
-                .add_to_container()
+            confirmation = confirmation.add_interactive_button(
+                hikari.ButtonStyle.DANGER,
+                f"note-upgrade-{self.author.id}",
+                label=f"Upgrade to {upgrade_component[1]}",
             )
             COMPONENTS[f"note-upgrade-{self.author.id}"] = upgrade_component[2]
-        confirmation = (
-            confirmation.add_button(
-                hikari.ButtonStyle.PRIMARY, f"note-continue-{self.author.id}"
-            )
-            .set_label("Continue")
-            .add_to_container()
-            .add_button(hikari.ButtonStyle.SECONDARY, "note-cancel")
-            .set_label("Cancel")
-            .add_to_container()
+        confirmation = confirmation.add_interactive_button(
+            hikari.ButtonStyle.PRIMARY,
+            f"note-continue-{self.author.id}",
+            label="Continue",
+        ).add_interactive_button(
+            hikari.ButtonStyle.SECONDARY, "note-cancel", label="Cancel"
         )
         COMPONENTS[f"note-continue-{self.author.id}"] = partialclass(
             Note.ApplyNote, user, vekn, note, level, False
@@ -2665,12 +2667,12 @@ class Status(BaseCommand):
                         "with your registration."
                     )
         else:
-            info = self.tournament.player_info(vekn, current_score=True)
+            info = self.tournament.player_info(vekn)
             logger.debug("Player info: %s", info)
             embed.description = ""
-            if info.drop and info.drop == tournament.DropReason.DROP:
+            if info.status == tournament.PlayerStatus.DROPPED_OUT:
                 embed.description = "**DROPPED**\n"
-            elif info.drop and info.drop == tournament.DropReason.DISQUALIFIED:
+            elif info.status == tournament.PlayerStatus.DISQUALIFIED:
                 embed.description = "**DISQUALIFIED**\n"
             penalties = [
                 note
@@ -2870,14 +2872,14 @@ class PlayerInfo(BaseCommand):
         user: Optional[hikari.Snowflake] = None,
     ) -> None:
         vekn = vekn or self.discord.get_vekn(user)
-        info = self.tournament.player_info(vekn, current_score=True)
+        info = self.tournament.player_info(vekn)
         description = self._player_display(vekn)
         description += (
             f"\n{info.rounds} round{'s' if info.rounds > 1 else ''} played {info.score}"
         )
-        if info.drop and info.drop == tournament.DropReason.DROP:
+        if info.status == tournament.PlayerStatus.DROPPED_OUT:
             description += "\n**DROPPED**"
-        elif info.drop and info.drop == tournament.DropReason.DISQUALIFIED:
+        elif info.status == tournament.PlayerStatus.DISQUALIFIED:
             description += "\n**DISQUALIFIED**"
         embed = hikari.Embed(
             title="Player Info",
@@ -2966,9 +2968,9 @@ class Results(BaseCommand):
     ]
 
     async def __call__(
-        self, round: Optional[int] = None, public: Optional[bool] = False
+        self, round_number: Optional[int] = None, public: Optional[bool] = False
     ) -> None:
-        round_number = round or self.tournament.current_round
+        round_number = round_number or self.tournament.current_round
         try:
             round = self.tournament.rounds[round_number - 1]
         except IndexError:
@@ -2981,15 +2983,14 @@ class Results(BaseCommand):
         embed = hikari.Embed(
             title="Finals" if round.finals else f"Round {round_number}"
         )
-        round.score()
-        incorrect = set(round.incorrect)
+        incorrect = round.score()
         for i, table in enumerate(round.seating.iter_tables(), 1):
             scores = []
             for j, vekn in enumerate(table, 1):
                 score = round.results.get(vekn, None) or tournament.Score()
                 scores.append(f"{j}. {self._player_display(vekn)} {score}")
             embed.add_field(
-                name=f"Table {i} " + ("⚠️" if i in incorrect else "☑️"),
+                name=("⚠️ " if i in incorrect else "☑️ ") + f"Table {i}",
                 value="\n".join(scores),
                 inline=True,
             )
@@ -2999,11 +3000,13 @@ class Results(BaseCommand):
 
 def status_icon(status: tournament.PlayerStatus) -> str:
     return {
+        tournament.PlayerStatus.NOT_REGISTERED: "❌",
         tournament.PlayerStatus.CHECKED_IN: "✅",
+        tournament.PlayerStatus.CHECKIN_REQUIRED: "⌛️",
+        tournament.PlayerStatus.DROPPED_OUT: "❌",
         tournament.PlayerStatus.DISQUALIFIED: "⛔️",
         tournament.PlayerStatus.PLAYING: "▶️",
         tournament.PlayerStatus.MISSING_DECK: "📄",
-        tournament.PlayerStatus.CHECKIN_REQUIRED: "⌛️",
         tournament.PlayerStatus.WAITING: "",
         tournament.PlayerStatus.CHECKED_OUT: "❌",
     }[status]
@@ -3176,7 +3179,7 @@ class DownloadReports(BaseCommand):
                     "",  # country
                     player.vekn,
                     info.rounds,
-                    "DQ" if info.drop else "",
+                    "DQ" if info.status == tournament.PlayerStatus.DISQUALIFIED else "",
                 ]
             )
         return self._build_csv("Methuselahs.csv", data)

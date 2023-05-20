@@ -5,8 +5,9 @@ import logging
 import math
 import os
 import random
+import secrets
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import aiohttp
 import asgiref.sync
@@ -120,27 +121,27 @@ class Player:
 @dataclass
 class Round:
     seating: krcg.seating.Round = field(default_factory=krcg.seating.Round)
-    results: Dict[str, Score] = field(default_factory=dict)
-    overrides: Dict[int, Note] = field(default_factory=dict)
+    results: dict[str, Score] = field(default_factory=dict)
+    overrides: dict[int, Note] = field(default_factory=dict)
     finals: bool = False
 
-    def score(self) -> List[int]:
+    def score(self) -> set[int]:
         """Returns the list of incorrect tables"""
-        incorrect = []
+        incorrect = set()
         if not self.seating:
             return
-        for table_num in range(1, self.seating.tables_count + 1):
+        for table_num in range(1, self.seating.tables_count() + 1):
             if not self.score_table(table_num):
-                incorrect.append(table_num)
+                incorrect.add(table_num)
         return incorrect
 
     def score_player(self, player: Player) -> bool:
         """Returns True if the player's table score is correct/complete"""
         if not self.seating:
             return
-        for table_num, table in enumerate(self.seating.tables_count, 1):
+        for table_num, table in enumerate(self.seating.iter_tables(), 1):
             if player.vekn in table:
-                return self.score_table(round, table_num)
+                return self.score_table(table_num)
 
     def score_table(self, table_num: int) -> bool:
         """Returns True if the table score is correct/complete"""
@@ -216,6 +217,17 @@ class PlayerInfo:
     position: Optional[int] = None
 
 
+def random_id() -> str:
+    """Short enough, readable, statistically no collision with a few hundred players"""
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ13456789"
+    r = secrets.randbits(40)
+    res = ""
+    for _ in range(8):
+        res += alphabet[r % 32]
+        r = r // 32
+    return res
+
+
 @dataclass
 class Tournament:
     """Tournament data and base methods"""
@@ -233,11 +245,12 @@ class Tournament:
     extra: dict = field(default_factory=dict)
 
     def __bool__(self):
+        """A newly initialized tournament evaluates as False"""
         return bool(self.name)
 
     async def add_player(
         self,
-        vekn: Optional[str] = None,
+        vekn: str,
         name: Optional[str] = None,
         deck: Optional[krcg.deck.Deck] = None,
         judge: bool = False,
@@ -258,7 +271,7 @@ class Tournament:
             else:
                 # use next number, not count
                 # droping before first removes a player from the list and could collide
-                vekn = f"P-{self.players.next_number}"
+                vekn = f"P{random_id()}"
                 temp_vekn = True
         # make sure not to overwrite a previous registration with the same VEKN ID
         # only a judge can override a previous vekn use
@@ -321,7 +334,7 @@ class Tournament:
                 player.playing if self.state == TournamentState.PLAYING else playing
             )
         else:
-            if vekn and not temp_vekn:
+            if not temp_vekn:
                 name = await _check_vekn(vekn)
             player = Player(
                 vekn=vekn,
@@ -329,7 +342,7 @@ class Tournament:
                 deck=deck.to_json() if deck else {},
                 playing=playing,
             )
-            self.players.add(player)
+            self.players[vekn] = player
         # check for max_rounds
         if self.max_rounds and self.player_rounds_played(player) >= self.max_rounds:
             raise ErrorMaxRoundReached()
@@ -636,7 +649,7 @@ class Tournament:
         round.results[player.vekn] = Score(vp=vps)
         return round.score_player(player)
 
-    def standings(self, toss=False) -> Tuple[Optional[str], List[Rank]]:
+    def standings(self, toss=False) -> Tuple[Optional[str], list[Rank]]:
         """Return the winner (if any) and a full ranking [(rank, vekn, score)]
 
         If checking standings for finals list, toss should be True so that equal ranks
@@ -777,7 +790,7 @@ class Tournament:
         if player_id not in self.players:
             return PlayerStatus.NOT_REGISTERED
         player = self.players[player_id]
-        drop = self.dropped.get(self.player.vekn, None)
+        drop = self.dropped.get(player.vekn, None)
         if drop == DropReason.DROP:
             return PlayerStatus.DROPPED_OUT
         elif drop == DropReason.DISQUALIFIED:
@@ -833,9 +846,9 @@ class Tournament:
             notes=self.notes.get(player_id, []),
         )
         if self.rounds:
-            self.rounds[-1]
-            for table, position, _size, player in round.seating.iter_table_players():
-                if player == self.player.vekn:
+            round = self.rounds[-1]
+            for table, position, _size, vekn in round.seating.iter_table_players():
+                if vekn == player.vekn:
                     ret.table = table
                     ret.position = position
                     break

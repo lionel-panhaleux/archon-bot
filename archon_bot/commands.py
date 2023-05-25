@@ -1750,8 +1750,7 @@ class Round(BaseCommand):
     async def _display_seating(self, table_num) -> None:
         """Display the seating in the table channel."""
         table = self.tournament.rounds[-1].seating[table_num - 1]
-        channel_id = self.discord.get_table_text_channel(table_num).id
-        voice_channel = self.discord.get_table_voice_channel(table_num).id
+        channel_id = self.discord.get_table_voice_channel(table_num).id
         embed = hikari.Embed(
             title=f"Table {table_num} seating",
             description="\n".join(
@@ -1759,15 +1758,13 @@ class Round(BaseCommand):
             )
             + "\n\nThe first player should create the table.",
         )
-        if voice_channel:
-            embed.add_field(name="Join vocal", value=f"<#{voice_channel}>", inline=True)
         embed.add_field(
             name="Start the timer",
             value="`/timer start hours:2 minutes:30`",
             inline=True,
         )
         embed.set_thumbnail(hikari.UnicodeEmoji("🪑"))
-        await self.bot.rest.create_message(channel_id, embed=embed)
+        await self.bot.rest.create_message(channel_id, embed=embed, user_mentions=True)
 
     async def start(self) -> None:
         """Start a round. Dynamically optimise seating to follow official VEKN rules.
@@ -1797,9 +1794,11 @@ class Round(BaseCommand):
             title=f"Round {self.tournament.current_round} Seating",
         )
         for i, table in enumerate(round.seating.iter_tables(), 1):
+            vocal_channel_id = self.discord.get_table_voice_channel(i).id
             embed.add_field(
                 name=f"Table {i}",
-                value="\n".join(
+                value=f"**Join <#{vocal_channel_id}>**\n"
+                + "\n".join(
                     f"{j}. {self._player_display(vekn)}"
                     for j, vekn in enumerate(table, 1)
                 ),
@@ -2333,7 +2332,7 @@ class Announce(BaseCommand):
 
     async def __call__(self) -> None:
         await self.deferred()
-        judges_channel_id = self.discord.channels["TEXT"][Role.JUDGE].id
+        judges_channel_id = self.discord.channels["VOICE"][Role.JUDGE].id
         current_round = self.tournament.current_round
         if self.tournament.state in [
             tournament.TournamentState.CHECKIN,
@@ -2441,6 +2440,7 @@ class Announce(BaseCommand):
                 title=(f"{self.tournament.name} — CHECK-IN — {current_round}"),
                 description=(
                     "⚠️ **Check-in is required to play** ⚠️\n"
+                    f"<@&{players_role_id}>\n"
                     f"Please confirm your participation with the {CheckIn.mention()} "
                     "command.\n"
                     f"You can use {Status.mention()} to verify your status."
@@ -2470,7 +2470,6 @@ class Announce(BaseCommand):
                 *(
                     self.create_or_edit_response(
                         embed=embed,
-                        content=f"<@&{players_role_id}>",
                         role_mentions=[players_role_id],
                     ),
                     self.bot.rest.create_message(judges_channel_id, embed=judges_embed),
@@ -2620,8 +2619,9 @@ class Announce(BaseCommand):
                         f"- {Round.mention('finish')} when all is good\n"
                         "\n"
                         f"You can still register a late arrival with "
-                        "{RegisterPlayer.mention()} then add them to a 4-players table "
-                        f"that has not started (if any) with {Round.mention('add')}."
+                        f"{RegisterPlayer.mention()} then add them "
+                        "to a 4-players table that has not started (if any) with "
+                        f"{Round.mention('add')}."
                     ),
                 )
             await asyncio.gather(
@@ -2693,18 +2693,15 @@ class Status(BaseCommand):
                     seat = "seed"
                 else:
                     seat = "seat"
-                text_chan_id = self.discord.channels["TEXT"].get(info.table, None).id
                 voice_chan_id = self.discord.channels["VOICE"].get(info.table, None).id
-                if text_chan_id:
+                if voice_chan_id:
                     embed.description = (
-                        f"You are {seat} {info.position} on <#{text_chan_id}>\n"
+                        f"You are {seat} {info.position} on <#{voice_chan_id}>\n"
                     )
                 else:
                     embed.description = (
                         f"You are {seat} {info.position} on table {info.table}\n"
                     )
-                if voice_chan_id:
-                    embed.description += f"\n**Join vocal:** <#{voice_chan_id}>"
                 embed.description += (
                     f"\nUse the {Report.mention()} command to register your VPs"
                 )
@@ -2912,18 +2909,15 @@ class PlayerInfo(BaseCommand):
                     seat = "seed"
                 else:
                     seat = "seat"
-                text_chan_id = self.discord.channels["TEXT"].get(info.table, None).id
                 voice_chan_id = self.discord.channels["VOICE"].get(info.table, None).id
-                if text_chan_id:
+                if voice_chan_id:
                     description = (
-                        f"Player is {seat} {info.position} on <#{text_chan_id}>\n"
+                        f"Player is {seat} {info.position} on <#{voice_chan_id}>\n"
                     )
                 else:
                     description = (
                         f"Player is {seat} {info.position} on table {info.table}\n"
                     )
-                if voice_chan_id:
-                    description += f"\n**Vocal:** <#{voice_chan_id}>"
                 embed.add_field(
                     name="Playing",
                     value=description,

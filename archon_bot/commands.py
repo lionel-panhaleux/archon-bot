@@ -194,17 +194,17 @@ class DiscordChannel:
 @dataclass
 class DiscordExtra:
     prefix: str = ""
-    players: dict[hikari.Snowflake, str] = field(default_factory=dict)
+    players: dict[str, str] = field(default_factory=dict)
     judges: list[hikari.Snowflake] = field(default_factory=list)
     spectators: list[hikari.Snowflake] = field(default_factory=list)
     roles: dict[str, DiscordRole] = field(default_factory=dict)
     channels: dict[str, dict[str, DiscordChannel]] = field(default_factory=dict)
 
     def get_vekn(self, discord_id: hikari.Snowflake) -> str:
-        return self.players.get(discord_id, None)
+        return self.players.get(str(discord_id), None)
 
-    def get_discord_id(self, vekn: str) -> str:
-        return {v: k for k, v in self.players.items()}.get(vekn, None)
+    def get_discord_id(self, vekn: str) -> hikari.Snowflake:
+        return hikari.Snowflake({v: k for k, v in self.players.items()}.get(vekn, 0))
 
     def role_name(self, role: Role, table_num: Optional[int] = None) -> str:
         if role == Role.ROOT_JUDGE:
@@ -482,7 +482,9 @@ class BaseInteraction:
             self.discord.channels.get("TEXT", {}).pop(key, None)
             self.discord.channels.get("VOICE", {}).pop(key, None)
             if key == Role.PLAYER:
-                id_roles.extend((did, role) for did in self.discord.players.keys())
+                id_roles.extend(
+                    (hikari.Snowflake(did), role) for did in self.discord.players.keys()
+                )
             elif key == Role.ROOT_JUDGE:
                 id_roles.extend((uid, role) for uid in self.discord.judges)
                 id_roles.append((self.bot.get_me().id, role))
@@ -583,41 +585,6 @@ class BaseInteraction:
         ]
         if self.tournament.state == tournament.TournamentState.PLAYING:
             for table_num in range(1, self.tournament.tables_count() + 1):
-                expected.append(
-                    (
-                        ("TEXT", str(table_num)),
-                        self.discord.channel_name(
-                            Role.PLAYER, hikari.ChannelType.GUILD_TEXT, table_num
-                        ),
-                        [
-                            hikari.PermissionOverwrite(
-                                id=self.bot.get_me().id,
-                                type=hikari.PermissionOverwriteType.MEMBER,
-                                allow=perm.ARCHON,
-                            ),
-                            hikari.PermissionOverwrite(
-                                id=self.guild_id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                deny=perm.TEXT,
-                            ),
-                            hikari.PermissionOverwrite(
-                                id=self.discord.roles[str(table_num)].id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                allow=perm.TEXT,
-                            ),
-                            hikari.PermissionOverwrite(
-                                id=self.discord.roles[Role.JUDGE].id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                allow=perm.TEXT,
-                            ),
-                            hikari.PermissionOverwrite(
-                                id=self.discord.roles[Role.SPECTATOR].id,
-                                type=hikari.PermissionOverwriteType.ROLE,
-                                allow=perm.SPECTATE_TEXT,
-                            ),
-                        ],
-                    )
-                )
                 expected.append(
                     (
                         ("VOICE", str(table_num)),
@@ -1280,13 +1247,27 @@ class Register(BaseCommand):
                 raise CommandFailed(
                     "Another player has already registered with this ID"
                 )
-        else:
-            vekn = self.discord.get_vekn(discord_id)
+        previous_vekn = self.discord.get_vekn(discord_id)
+        if previous_vekn and vekn and previous_vekn != vekn:
+            await self.create_or_edit_response(
+                embed=hikari.Embed(
+                    title="Already registered with another vekn",
+                    description=(
+                        f"You already registered with vekn `#{previous_vekn}`.\n"
+                        "You can continue with the previous vekn "
+                        "(omit the `vekn` parameter in your commands).\n"
+                        f"Otherwise, you need to {Drop.mention()} the previous "
+                        "registration before you can register with a new vekn."
+                    ),
+                )
+            )
+            return
+        vekn = previous_vekn
         try:
             player = await self.tournament.add_player(
-                vekn, name, deck=deck, judge=False
+                vekn, name, deck=deck, judge=False, previous_vekn=previous_vekn
             )
-            self.discord.players[discord_id] = player.vekn
+            self.discord.players[str(discord_id)] = player.vekn
         except tournament.ErrorDecklistRequired:
             await self.create_or_edit_response(
                 embed=hikari.Embed(
@@ -1392,7 +1373,7 @@ class RegisterPlayer(BaseCommand):
         try:
             player = await self.tournament.add_player(vekn, name, deck=deck, judge=True)
             if user:
-                self.discord.players[user] = player.vekn
+                self.discord.players[str(user)] = player.vekn
         except tournament.ErrorDecklistRequired:
             await self.create_or_edit_response(
                 embed=hikari.Embed(
@@ -1752,7 +1733,7 @@ class Round(BaseCommand):
         table = self.tournament.rounds[-1].seating[table_num - 1]
         channel_id = self.discord.get_table_voice_channel(table_num).id
         embed = hikari.Embed(
-            title=f"Table {table_num} seating",
+            title=f"🪑 Table {table_num} seating",
             description="\n".join(
                 f"{j}. {self._player_display(p)}" for j, p in enumerate(table, 1)
             )
@@ -1763,7 +1744,6 @@ class Round(BaseCommand):
             value="`/timer start hours:2 minutes:30`",
             inline=True,
         )
-        embed.set_thumbnail(hikari.UnicodeEmoji("🪑"))
         await self.bot.rest.create_message(channel_id, embed=embed, user_mentions=True)
 
     async def start(self) -> None:
@@ -2331,7 +2311,7 @@ class Announce(BaseCommand):
     OPTIONS = []
 
     async def __call__(self) -> None:
-        await self.deferred()
+        # do not defer, we might want to mention people
         judges_channel_id = self.discord.channels["VOICE"][Role.JUDGE].id
         current_round = self.tournament.current_round
         if self.tournament.state in [
@@ -2439,10 +2419,9 @@ class Announce(BaseCommand):
             embed = hikari.Embed(
                 title=(f"{self.tournament.name} — CHECK-IN — {current_round}"),
                 description=(
-                    "⚠️ **Check-in is required to play** ⚠️\n"
-                    f"<@&{players_role_id}>\n"
-                    f"Please confirm your participation with the {CheckIn.mention()} "
-                    "command.\n"
+                    "⚠️ **Check-in is required to play** ⚠️ \n"
+                    f"Please confirm your participation"
+                    f" with the {CheckIn.mention()} command.\n"
                     f"You can use {Status.mention()} to verify your status."
                 ),
             )
@@ -2470,6 +2449,7 @@ class Announce(BaseCommand):
                 *(
                     self.create_or_edit_response(
                         embed=embed,
+                        content=f"<@&{players_role_id}>",
                         role_mentions=[players_role_id],
                     ),
                     self.bot.rest.create_message(judges_channel_id, embed=judges_embed),
@@ -2693,7 +2673,7 @@ class Status(BaseCommand):
                     seat = "seed"
                 else:
                     seat = "seat"
-                voice_chan_id = self.discord.channels["VOICE"].get(info.table, None).id
+                voice_chan_id = self.discord.get_table_voice_channel(info.table).id
                 if voice_chan_id:
                     embed.description = (
                         f"You are {seat} {info.position} on <#{voice_chan_id}>\n"
@@ -2909,7 +2889,7 @@ class PlayerInfo(BaseCommand):
                     seat = "seed"
                 else:
                     seat = "seat"
-                voice_chan_id = self.discord.channels["VOICE"].get(info.table, None).id
+                voice_chan_id = self.discord.get_table_voice_channel(info.table).id
                 if voice_chan_id:
                     description = (
                         f"Player is {seat} {info.position} on <#{voice_chan_id}>\n"
@@ -3294,4 +3274,3 @@ class ResetChannelsAndRoles(BaseCommand):
 # TODO Make admin access admin-only
 # TODO More buttons to guide user (especially on /status)
 # TODO Fix player discord mentions during registration (disconnected players)
-# TODO Remove TEXT channels, use voice channels chat instead

@@ -7,7 +7,7 @@ import os
 import random
 import secrets
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 import aiohttp
 import asgiref.sync
@@ -106,7 +106,7 @@ class Note:
 @dataclass(unsafe_hash=True)
 class Player:
     vekn: str = field(compare=True)
-    name: str = field(default="", compare=False)
+    name: Optional[str] = field(compare=False)
     deck: dict = field(default_factory=dict, compare=False)
     playing: bool = field(default=False, compare=False)
     seed: int = field(default=0, compare=False)
@@ -242,7 +242,7 @@ class Tournament:
     rounds: list[Round] = field(default_factory=list)
     notes: dict[str, list[Note]] = field(default_factory=dict)
     winner: str = ""
-    extra: dict = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def __bool__(self):
         """A newly initialized tournament evaluates as False"""
@@ -250,7 +250,7 @@ class Tournament:
 
     async def add_player(
         self,
-        vekn: str,
+        vekn: Optional[str] = None,
         name: Optional[str] = None,
         deck: Optional[krcg.deck.Deck] = None,
         judge: bool = False,
@@ -375,7 +375,7 @@ class Tournament:
         if self.dropped.get(vekn, None) == DropReason.DISQUALIFIED:
             raise CommandFailed("Player is already disqualified")
         elif reason == DropReason.DROP and not self.rounds:
-            self.players.remove(vekn)
+            self.players.pop(vekn)
             self.dropped.pop(vekn, None)
         else:
             self.dropped[vekn] = reason

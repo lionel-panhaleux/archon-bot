@@ -4,7 +4,7 @@ import enum
 import os
 import random
 import logging
-import orjson
+import msgspec
 import psycopg
 import psycopg.types.json
 import psycopg_pool
@@ -14,12 +14,12 @@ from typing import Any, AsyncIterator
 logger = logging.getLogger()
 
 
-def orjson_dumps(obj: Any) -> str:
+def bytes_dumps(obj: Any) -> str:
     """Adapter required because for now psycopg expects str
 
     See https://github.com/psycopg/psycopg/issues/569
     """
-    return orjson.dumps(obj).decode()
+    return msgspec.json.encode(obj).decode()
 
 
 async def configure(conn: psycopg.AsyncConnection) -> None:
@@ -36,8 +36,8 @@ def reconnect_failed(_pool: psycopg_pool.AsyncConnectionPool) -> None:
 
 DB_USER = os.getenv("DB_USER")
 DB_PWD = os.getenv("DB_PWD")
-psycopg.types.json.set_json_dumps(orjson_dumps)
-psycopg.types.json.set_json_loads(orjson.loads)
+psycopg.types.json.set_json_dumps(bytes_dumps)
+psycopg.types.json.set_json_loads(msgspec.json.decode)
 POOL = psycopg_pool.AsyncConnectionPool(
     f"postgresql://{DB_USER}:{DB_PWD}@localhost/archon",
     open=False,

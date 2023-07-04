@@ -5,6 +5,7 @@ import os
 
 import hikari
 import krcg.vtes
+import uvloop
 
 from .commands import (
     APPLICATION,
@@ -20,10 +21,13 @@ from . import serialize
 from .tournament import Tournament
 
 
+# ######################################################################### Async config
+asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+
 # ####################################################################### Logging config
 logger = logging.getLogger()
 logging.basicConfig(
-    level=logging.DEBUG if os.getenv("DEBUG") else logging.INFO,
+    level=logging.DEBUG if __debug__ else logging.INFO,
     format="[%(levelname)7s] %(message)s",
 )
 

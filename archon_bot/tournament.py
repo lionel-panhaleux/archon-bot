@@ -760,7 +760,7 @@ class Tournament:
             return len(self.rounds)
         if round_number < 1:
             raise CommandFailed(f"Invalid round number {round_number}")
-        if round_number >= len(self.rounds):
+        if round_number > len(self.rounds):
             raise CommandFailed(f"Round {round_number} has yet to be played")
         return round_number
 

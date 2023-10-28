@@ -1,4 +1,4 @@
-1.3 (unreleased)
+1.3 (2023-10-28)
 ----------------
 
 - Try and fix DB connection errors when the DB server unexpectedly closes the connection

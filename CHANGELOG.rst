@@ -3,6 +3,7 @@
 
 - Try and fix DB connection errors when the DB server unexpectedly closes the connection
 - Fix rounds number check (was off by one)
+- Fixed typos in README
 
 1.2 (2023-03-12)
 ----------------

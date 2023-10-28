@@ -72,7 +72,7 @@ You can use this identifier (prefix included) as the VEKN number in all commands
 
 Admins:
 - Reset channels and roles with `/reset-channels-and-roles`.
-  This can fix things if you've messed up (eg. deleted a tournament role or channel).
+  This can fix things if you have messed up (eg. deleted a tournament role or channel).
 
 ## Quickstart: Simple Usage
 
@@ -91,7 +91,7 @@ It will display help and guidance messages in the main and judges channel.
 
 ## Command Permissions
 
-As soon as you open your first tournmanet with the Archon bot, it will create a long standing role called
+As soon as you open your first tournament with the Archon bot, it will create a long standing role called
 `Archon Judge` on your server. This role will be assigned to all judges for all tournaments.
 You can use it to set the commands permissions so as to limit clutter for normal players.
 
@@ -134,7 +134,7 @@ to the players in the table channels (timer bot, krcg):
 ```
 
 You can also optionally add some spectators, they will have acces to all tables.
-It's useful if you like to give streamers access to the vocal channels:
+It is useful if you like to give streamers access to the vocal channels:
 
 ```
 /appoint role: Spectator user: @some_guest
@@ -145,30 +145,31 @@ It's useful if you like to give streamers access to the vocal channels:
 ##### Number of rounds
 
 You can indicate the maximum number of rounds a player can play with `/set-max-round`.
-It is only relevant if you're planning some kind of league or championship where there are more time slots for rounds
-than the number of rounds you expect each player to play.
-For example, if you're planning 1 "rounds slots" every Saturday for six weeks (6 possible dates),
-but only require your players to play and complete 3 rounds. In that case use the rounds limit
+It is only relevant if you are planning some kind of league or championship where there are more time slots for rounds
+than the maximum number of rounds you expect each player to play.
+For example, if you are planning 1 "rounds slots" every Saturday for six weeks (6 possible dates),
+but only want each of your players to play 3 rounds. In that case use the rounds limit
 
 ```
 /set-max-round rounds: 3
 ```
 
 This will prevent players to be able to play more than this number of rounds,
-even if you're running more "rounds slots" than this with the bots.
+even if you're running more "rounds slots".
 
-In most tournaments, this parameter is useless because you expect players to play all the rounds you're running
+In most tournaments, this parameter is useless because you expect players to play all the rounds you are running
 if they can.
 
 ##### VEKN ID requirement
 
-In official tournament, a VEKN ID is required. The bot will check is existence of the VEKN ID against the VEKN registry,
-although it cannot verify the player is actually the right person (we trust the players to provide the _right_ id).
-Different players cannot have the same VEKN ID so if a player makes a mistake (wrong VEKN), the can simply use
-`/register` again with the right one. If someone else has their VEKN,
+In official tournaments, a VEKN ID is required. The bot will check the existence of the VEKN ID against the
+VEKN registry, although it cannot verify the player is actually the right person
+(we trust the players to provide the _right_ id). Different players cannot have the same VEKN ID so if a player makes
+a mistake (wrong VEKN), the can simply use `/register` again with the right one. If someone else has their VEKN,
 they need to ask a judge to use `/drop-player` and `/register-player` to remedy the issue.
 
 **You need to use this requirement for sanctionned tournaments.**
+
 If VEKN ID are required, the bot will issue archon-compatible reports files
 at the end of the tournament, facilitating reporting.
 
@@ -560,7 +561,7 @@ but make sure to note down their email and domain (country, city) for VEKN regis
 The bot will issue a temporary ID (with a `P-` prefix) that you can use
 as the VEKN ID for further commands (eg. `P-4`).
 
-You can optionally ask or **let your players check in in Discord** if they like,
+You can optionally **let your players check in in Discord** if they like,
 they can link their Discord account to a registered VEKN using the `/register` command:
 
 ```

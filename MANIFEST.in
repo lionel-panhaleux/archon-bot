@@ -1,6 +1,7 @@
 include LICENSE README.md CHANGELOG.rst
 
 graft archon_bot
+graft images
 prune tests
 exclude Makefile
 exclude .markdownlint.json

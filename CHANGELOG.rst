@@ -3,6 +3,14 @@
 
 - Refactor: use dataclasses, all discord infos in extra (including players discord ID)
 - Performance: use orjson, async DB commands and connection pool
+- VPs check now covers all invalid cases instead of just a few
+- Removed table text channels, use the voice channels chat instead
+- Displaying Seating score and add a link to official criteria
+- New separate Upload Decklist command, allowing file upload and text pasting
+- New separate staggered commands
+- The /announce command can now be used anywhere
+- Better help messages all around
+- New /batch-register command to upload a CSV list of players
 
 1.3 (2023-10-28)
 ----------------

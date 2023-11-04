@@ -23,12 +23,14 @@ from .tournament import Tournament
 # ####################################################################### Logging config
 logger = logging.getLogger()
 logging.basicConfig(
-    level=logging.DEBUG if os.getenv("DEBUG") else logging.INFO,
+    level=logging.DEBUG if __debug__ else logging.INFO,
     format="[%(levelname)7s] %(message)s",
 )
 
 # ####################################################################### Discord client
-bot = hikari.GatewayBot(os.getenv("DISCORD_TOKEN") or "")
+bot = hikari.GatewayBot(
+    os.getenv("DISCORD_TOKEN") or "", logs="TRACE_HIKARI" if __debug__ else "INFO"
+)
 UPDATE = os.getenv("UPDATE")
 RESET = os.getenv("RESET")
 
@@ -133,6 +135,11 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
             "Archon cannot be used in a private channel",
         )
         return
+    channel = event.interaction.app.cache.get_guild_channel(
+        event.interaction.channel_id
+    )
+    if not channel:
+        channel = await event.interaction.fetch_channel()
     logger.info(
         "Interaction %s from %s (Guild %s - Channel %s). Args: %s",
         getattr(
@@ -152,9 +159,6 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
         try:
             instance = None
             command = COMMANDS[event.interaction.command_id]
-            channel = event.interaction.get_channel()
-            if not channel:
-                channel = await event.interaction.fetch_channel()
             async with db.tournament(
                 event.interaction.guild_id,
                 channel.parent_id,
@@ -200,9 +204,6 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
         try:
             instance = None
             component_function = COMPONENTS[event.interaction.custom_id]
-            channel = event.interaction.get_channel()
-            if not channel:
-                channel = await event.interaction.fetch_channel()
             async with db.tournament(
                 event.interaction.guild_id,
                 channel.parent_id,
@@ -224,6 +225,43 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
                     channel.parent_id,
                 )
                 await instance()
+        except CommandFailed as exc:
+            logger.info("Command failed: %s - %s", event.interaction, exc.args)
+            if exc.args:
+                await _interaction_response(instance, event.interaction, exc.args[0])
+        except Exception:
+            logger.exception("Command failed: %s", event.interaction)
+            await _interaction_response(instance, event.interaction, "Command error.")
+    elif event.interaction.type == hikari.InteractionType.MODAL_SUBMIT:
+        try:
+            instance = None
+            component_function = COMPONENTS[event.interaction.custom_id]
+            kwargs = {
+                field.custom_id: field.value
+                for row in event.interaction.components
+                for field in row.components
+            }
+            async with db.tournament(
+                event.interaction.guild_id,
+                channel.parent_id,
+                component_function.UPDATE,
+            ) as (
+                connection,
+                tournament_data,
+            ):
+                instance = component_function(
+                    bot,
+                    connection,
+                    (
+                        utils.dictas(Tournament, tournament_data)
+                        if tournament_data
+                        else None
+                    ),
+                    event.interaction,
+                    channel.id,
+                    channel.parent_id,
+                )
+                await instance(**kwargs)
         except CommandFailed as exc:
             logger.info("Command failed: %s - %s", event.interaction, exc.args)
             if exc.args:

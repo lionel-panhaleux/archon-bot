@@ -1,7 +1,7 @@
 2.2 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Bump hikari version
 
 
 2.1 (2023-11-07)

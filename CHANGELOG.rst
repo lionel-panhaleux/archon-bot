@@ -1,4 +1,4 @@
-2.0 (unreleased)
+2.0 (2023-11-07)
 ----------------
 
 - Refactor: use dataclasses, all discord infos in extra (including players discord ID)

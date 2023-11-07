@@ -22,7 +22,8 @@ The announce message changes and depends on the step of the tournament you're at
 
 Players:
 
-- Register: `/register [vekn] [name] [decklist]`
+- Register: `/register [vekn] [name]`
+- Upload deck list: `/upload-deck [url] [file]`
 - Check in: `/check-in `
 - Report your result: `/report [vp]`
 - Drop out: `/drop`
@@ -36,7 +37,7 @@ be more practical for online tournaments, where using the VEKN might be easier i
 cases, and indispensible for offline tournaments.
 
 For players who do not have a _real_ VEKN, the bot delivers a temporary number
-prefixed with "P" instead, like `P-5`, to serve as vekn for the tournament.
+prefixed with "P" instead, like `P195730`, to serve as vekn for the tournament.
 You can use this identifier (prefix included) as the VEKN number in all commands
 
 - Opening the tournament:
@@ -45,9 +46,13 @@ You can use this identifier (prefix included) as the VEKN number in all commands
     * Announcement (help and guidance messages for both players and judges): `/announce`
     * Appoint judges and bots: `/appoint [role] [user]`
     * Configure the tournament: `/configure-tournament`
+    * Make a staggerred tournament: `/stagger [rounds_count]`
+    * Come back from staggered to standard: `/un-stagger`
     * Open check-in (confirm players presence): `/open-check-in`
 - Player management:
-    * Register a player (offline or missing VEKN): `/register-player [vekn] [name] [decklist] [user]`
+    * Register a player (offline or missing VEKN): `/register-player [vekn] [name] [user]`
+    * Upload a registration list (CSV): `/batch-register [file]`
+    * Upload a player's deck list: `/upload-deck-for [vekn] [user] [file] [url]`
     * Add a note, caution or warning to a player: `/note [level] [note] [user] [vekn]`
     * Get a player's info, including notes and warnings: `/player-info [user] [vekn] `
     * Drop a player: `/drop-player [user] [vekn]`
@@ -176,7 +181,10 @@ at the end of the tournament, facilitating reporting.
 ##### Decklist requirement
 
 If decklists are required, players wil need to submit them before checking in.
-They can use [VDB](https://vdb.im) or [Amaranth](https://amaranth.vtes.co.nz) urls.
+The players can use `upload-deck` and the judges `upload-deck-for`. They work the same,
+except the judges have to select a player to upload the deck to. You can either provide
+a `url` or a `file`. If you provide none, the bot displays a model for you to write
+(or copy/paste) your deck in.
 The decklist is saved upon submission: subsequent changes in VDB or Amaranth will
 need for the player to submit their decklist again to be recorded.
 Judges will have access to the decklists, but only after the first round has started.
@@ -209,7 +217,7 @@ command will yield an error because it cannot get a table for everyone.
 You should either have some players drop out or additional players check in.
 
 In case you want to run a tournament with 6, 7, or 11 players, you can setup a staggered
-tournament. In this case, you also need to use `/set-max-round` to indicate the number
+tournament. In this case, you need to use `/stagger` and indicate the number
 of rounds each player will play, so that the bot can compute a full staggered-rounds
 seating structure for you.
 
@@ -235,13 +243,6 @@ Players can then register easily with the `/register` command:
 - `vekn`: If the player has none and the tournament requires it, only a Judge can register them (see below)
 - `name`: The name the player would like to use for the tournament.
   Optional if the VEKN is provided, since the name will then be fetched from the VEKN registry.
-- `decklist`: Only if the tournament requires it, VDB (standard and deck-in-url) and Amaranth URLs are accepted.
-  The decklist is _copied and saved_ by the bot when the command is issued.
-  If the decklist is modified by the player in VDB or Amaranth, it will not be taken into account by the bot.
-  They need to issue the command _again_ with a decklist URL (even if it's the same)
-  to update the deck list in the bot registry.
-  For a standard (non-league) tournament, the bot will prevent a player to modify their decklist
-  once the first round has started.
 
 If a VEKN ID is required and a player does not have one,
 or if a player is struggling with the commands, any Judge (including you) can register
@@ -254,8 +255,25 @@ a player in their stead:
 - `vekn:` If the player has one. In that case, you do not need to fill in the name,
   it will be fetched from the VEKN registry.
 - `name:` If the player has no VEKN or you're not using them. In that case, no need to fill the VEKN
-- `decklist:` A deck URL (either VDB or Amaranth)
 - `user:` The Discord user (optional, but without it they will not be able to check in themselves)
+
+If decklists are required, players can submit them directly:
+```
+/upload-deck url: https://vdb.im/decks/12e26be1ade44d3a938c0a5984a70230
+```
+
+The decklist is _copied and saved_ by the bot when the command is issued.
+If the decklist is modified by the player in VDB or Amaranth, it will not be taken into account by the bot.
+They need to issue the command _again_ with a decklist URL (even if it's the same)
+to update the deck list in the bot registry.
+For a standard (non-league) tournament, the bot will prevent a player to modify their decklist
+once the first round has started.
+
+Judges can also upload a decklist on behalf of a player:
+
+```
+/upload-deck-for vekn: 1000123 url: https://vdb.im/decks/12e26be1ade44d3a938c0a5984a70230
+```
 
 You can display the list of registered players at any time
 
@@ -296,7 +314,7 @@ Note that only works if they have already registered in advance and the registra
 If not, they need to use the `/register` command as explained previously
 
 ```
-/register vekn: 1000123 decklist: https://vdb.im/decks/12e26be1ade44d3a938c0a5984a70230
+/register vekn: 1000123
 ```
 
 Since the check-in is open, this will also check them in directly
@@ -436,7 +454,7 @@ Alternatively, if the other players haven't started to play yet,
 you can add the late comer to a 4 players table after they've registered:
 
 ```
-/register-player vekn: 1000234 user: @late_player decklist: https://vdb.im/decks/12e26be1ade44d3a938c0a5984a70230
+/register-player vekn: 1000234 user: @late_player
 /round add table: 3 user: @late_player
 ```
 
@@ -537,6 +555,12 @@ You can take pre-registrations as usual:
 /register-player vekn: 1000123
 ```
 
+Or upload a file of all registered players:
+
+```
+/batch-register my-players.csv
+```
+
 And on tournament day, open the check-in:
 
 ```
@@ -548,7 +572,7 @@ And on tournament day, open the check-in:
 You can then register the player as they come as usual:
 
 ```
-/register-player vekn: 1000123 decklist: https://vdb.im/decks/12e26be1ade44d3a938c0a5984a70230
+/register-player vekn: 1000123
 ```
 
 Just register them by name if they don't have a VEKN yet,
@@ -558,8 +582,8 @@ but make sure to note down their email and domain (country, city) for VEKN regis
 /register-player name: Alice Allister
 ```
 
-The bot will issue a temporary ID (with a `P-` prefix) that you can use
-as the VEKN ID for further commands (eg. `P-4`).
+The bot will issue a temporary ID (with a `P` prefix) that you can use
+as the VEKN ID for further commands (eg. `P305729`).
 
 You can optionally **let your players check in in Discord** if they like,
 they can link their Discord account to a registered VEKN using the `/register` command:
@@ -584,7 +608,7 @@ With or without your players logged in on Discord, you can run your rounds norma
 Any judge can register the results using the `/fix-result` command over VEKN IDs:
 
 ```
-/fix-result vekn:1000123 2
+/fix-result vekn: 1000123 2
 ```
 
 If a player checks in between rounds, you can register them and check them in:

@@ -98,6 +98,7 @@ async def init():
 
 async def reset():
     async with POOL.connection() as conn:
+        await conn.set_read_only(False)
         async with conn.cursor() as cursor:
             logger.warning("Reset DB")
             await cursor.execute("DROP TABLE tournament")

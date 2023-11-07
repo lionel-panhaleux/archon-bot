@@ -1,7 +1,7 @@
 2.1 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Fix DB reset
 
 
 2.0 (2023-11-07)

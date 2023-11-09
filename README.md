@@ -43,6 +43,7 @@ You can use this identifier (prefix included) as the VEKN number in all commands
 - Opening the tournament:
     * Open a new tournament: `/open-tournament`
     * Set a maximum number of rounds (league): `/set-max-round [rounds_count]`
+    * Define a limited format: `/define-format [vdb_format] [ban_list] [single_clan] [single_vampire]`
     * Announcement (help and guidance messages for both players and judges): `/announce`
     * Appoint judges and bots: `/appoint [role] [user]`
     * Configure the tournament: `/configure-tournament`
@@ -164,6 +165,23 @@ even if you're running more "rounds slots".
 
 In most tournaments, this parameter is useless because you expect players to play all the rounds you are running
 if they can.
+
+##### Limited format
+
+You can define a limited format with the `/define-limited` command. You can provide a list of banned cards,
+or activate some common Storyline rules list "single clan" (75% of the crypt being the same clan) or "single vampire".
+You can also use a [VDB format file](https://vdb.im/documentation) to define the format, and that file will be made
+available to the players in the `/announce` message, to make it easy for them to build their decks with VDB.
+
+```
+/define-format vdb_format: my_storyline.txt single_clan: True
+```
+
+You can use the same command with no parameter to revert back to the Standard VEKN format:
+
+```
+/define-format
+```
 
 ##### VEKN ID requirement
 

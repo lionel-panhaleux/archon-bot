@@ -30,6 +30,10 @@ def dictas(cls: Dataclass, dic: dict) -> Dataclass:
         if origin is None:
             if is_dataclass(typ):
                 return dictas(typ, val)
+            elif typ is type(None):
+                return None
+            elif val is None:
+                return typ()
             else:
                 return typ(val)
         elif origin is list:

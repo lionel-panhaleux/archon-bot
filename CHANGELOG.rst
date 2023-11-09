@@ -1,7 +1,7 @@
 2.3 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Tournament limited format management (`/define-limited`), with VDB format files
 
 
 2.2 (2023-11-07)

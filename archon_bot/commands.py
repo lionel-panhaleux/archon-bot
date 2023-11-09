@@ -21,8 +21,10 @@ from hikari.interactions.base_interactions import ResponseType
 from hikari.interactions.command_interactions import CommandInteraction
 from hikari.interactions.component_interactions import ComponentInteraction
 import krcg.deck
+import krcg.vtes
 
 import chardet
+import requests
 import stringcase
 
 
@@ -42,6 +44,53 @@ COMPONENTS = {}
 
 VDB_URL = "https://vdb.im"
 AMARANTH_URL = "https://amaranth.vtes.co.nz"
+
+
+# We'll need cleaner VEKN csvs to replace this
+VTES_ABBREV_TO_SET = {
+    "Jyhad": "Jyhad",
+    "VTES": "Vampire: The Eternal Struggle",
+    "DS": "Dark Sovereigns",
+    "AH": "Ancient Hearts",
+    "Sabbat": "Sabbat",
+    "SW": "Sabbat War",
+    "FN": "Final Nights",
+    "BL": "Bloodlines",
+    "CE": "Camarilla Edition",
+    "Anarchs": "Anarchs",
+    "BH": "Black Hand",
+    "Gehenna": "Gehenna",
+    "Tenth": "Tenth Anniversary",
+    "KMW": "Kindred Most Wanted",
+    "LoB": "Legacies of Blood",
+    "NoR": "Nights of Reckoning",
+    "Third": "Third Edition",
+    "SoC": "Sword of Caine",
+    "LotN": "Lords of the Night",
+    "BSC": "Blood Shadowed Court",
+    "TR": "Twilight Rebellion",
+    "KoT": "Keepers of Tradition",
+    "KoTR": "Keepers of Tradition Reprint",
+    "EK": "Ebony Kingdom",
+    "HttB": "Heirs to the Blood",
+    "HttBR": "Heirs to the Blood Reprint",
+    "DM": "Danse Macabre",
+    "TU": "The Unaligned",
+    "AU": "Anarch Unbound",
+    "Anthology": "Anthology",
+    "Anthology I": "Anthology",  # hack because of VDB/VEKN mismatch here
+    "LK": "Lost Kindred",
+    "SP": "Sabbat Preconstructed",
+    "25th": "Twenty-Fifth Anniversary",
+    "FB": "First Blood",
+    "V5": "Fifth Edition",
+    "V5A": "Fifth Edition (Anarch)",
+    "NB": "New Blood",
+    "FoL": "Fall of London",
+    "SoB": "Shadows of Berlin",
+    "EoG": "Echoes of Gehenna",
+    "NB2": "New Blood II",
+}
 
 
 def build_command_tree(rest_api):
@@ -316,6 +365,7 @@ class BaseInteraction:
         if self.tournament:
             discord_data = self.tournament.extra.get("discord", {})
         self.discord = utils.dictas(DiscordExtra, discord_data)
+        self.vdb_format = self.tournament.extra.get("vdb_format", {})
         self.interaction_context = interaction_context or InteractionContext()
         if self.REQUIRES_TOURNAMENT and not self.tournament:
             raise CommandFailed(
@@ -349,6 +399,7 @@ class BaseInteraction:
         if self.UPDATE < db.UpdateLevel.WRITE:
             raise RuntimeError("Command is not marked as UPDATE")
         self.tournament.extra["discord"] = asdict(self.discord)
+        self.tournament.extra["vdb_format"] = self.vdb_format
         data = asdict(self.tournament)
         await db.update_tournament(
             self.connection,
@@ -857,7 +908,7 @@ class OpenTournament(BaseCommand):
         """Open the tournament, create channels and roles, then configure (chain)"""
         if self.tournament:
             raise CommandFailed("A tournament is already open here")
-        await self.deferred()
+        await self.deferred(flags=hikari.MessageFlag.EPHEMERAL)
         logger.debug("Creating tournament...")
         self.tournament = tournament.Tournament(name=name)
         self.discord.prefix = "".join([w[0] for w in name.split()][:3])
@@ -994,13 +1045,42 @@ class ConfigureTournament(BaseCommand):
                 "after first round\n"
             ),
         )
+        if self.tournament.is_limited():
+            limits = []
+            if self.tournament.flags & tournament.TournamentFlag.SINGLE_CLAN:
+                limits.append("- Single clan (75%) in crypt")
+            if self.tournament.flags & tournament.TournamentFlag.SINGLE_VAMPIRE:
+                limits.append("- Single vampire in crypt")
+            if self.tournament.include:
+                limits.append("- Limited list of allowed cards")
+            if self.tournament.exclude:
+                limits.append("- Additional list of banned cards")
+            embed.description += "\n**Limited tournament**\n" + "\n".join(limits) + "\n"
+            embed.description += (
+                f"Use {DefineLimited.mention()} to modify the format.\n"
+            )
+            if components and self.vdb_format:
+                COMPONENTS["vdb-format"] = DownloadVDBFormat
+                components.insert(
+                    1,
+                    self.bot.rest.build_message_action_row().add_interactive_button(
+                        hikari.ButtonStyle.PRIMARY,
+                        "vdb-format",
+                        label="Download VDB format",
+                    ),
+                )
+        else:
+            embed.description += (
+                f"\n**Standard tournament**\n"
+                f"You can use {DefineLimited.mention()} to define a limited format.\n"
+            )
         if components:
-            if between:
+            if between and not self.tournament.max_rounds:
                 embed.description += (
-                    "\n\n**League mode**"
+                    "\n**League mode**"
                     "\nIf this is a league, you might want to limit the number of"
                     " rounds a player can participate in with "
-                    f"{SetMaxRounds.mention()}."
+                    f"{SetMaxRounds.mention()}.\n"
                 )
             if not self.tournament.rounds and len(self.tournament.players) in [
                 6,
@@ -1008,14 +1088,14 @@ class ConfigureTournament(BaseCommand):
                 11,
             ]:
                 embed.description += (
-                    "\n\n**Staggered tournament**"
+                    "\n**Staggered tournament**"
                     "\nIf you have 6, 7, or 11 players, you can use "
                     f"{Stagger.mention()} to make this a staggered tournament"
-                    "(eg. each player playing 2 out of 3 rounds)"
+                    "(eg. each player playing 2 out of 3 rounds).\n"
                 )
         else:
             embed.description += (
-                "\n\n**Registrations are now open**\n"
+                "\n**Registrations are now open**\n"
                 f"- Use {Announce.mention()} to display help for players and judges\n"
                 f"- Use {Appoint.mention()} to appoint judges, bots and spectators\n"
             )
@@ -1026,6 +1106,10 @@ class ConfigureTournament(BaseCommand):
                 embed=embed,
                 components=components,
             )
+            self.interaction_context.has_response = True
+            if not components:
+                next_step = Announce.copy_from_interaction(self)
+                await next_step()
         # when called directly or just after the `open` command
         else:
             await self.create_or_edit_response(
@@ -1033,6 +1117,25 @@ class ConfigureTournament(BaseCommand):
                 flags=hikari.MessageFlag.EPHEMERAL,
                 components=components,
             )
+
+
+class DownloadVDBFormat(BaseComponent):
+    UPDATE = db.UpdateLevel.READ_ONLY
+    ACCESS = CommandAccess.PUBLIC
+
+    async def __call__(self):
+        if not self.vdb_format:
+            raise CommandFailed("No format file available")
+        data = json.dumps(self.vdb_format, indent=2).encode("utf-8")
+        attachment = hikari.Bytes(
+            data, f"{self.tournament.name}_vdb_format.txt", mimetype="text"
+        )
+        await self.interaction.create_initial_response(
+            hikari.ResponseType.MESSAGE_CREATE,
+            flags=hikari.MessageFlag.EPHEMERAL,
+            attachment=attachment,
+        )
+        self.interaction_context.has_response = True
 
 
 class SetMaxRounds(BaseCommand):
@@ -1070,9 +1173,7 @@ class SetMaxRounds(BaseCommand):
 
 
 class Stagger(BaseCommand):
-    """Optional: configure a maximum number of rounds for players.
-    Mostly useful for leagues.
-    """
+    """Configure Tournament as staggered for 6, 7 or 11 players."""
 
     UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.JUDGE
@@ -1123,9 +1224,7 @@ class Stagger(BaseCommand):
 
 
 class UnStagger(BaseCommand):
-    """Optional: configure a maximum number of rounds for players.
-    Mostly useful for leagues.
-    """
+    """Switch back from staggered to standard."""
 
     UPDATE = db.UpdateLevel.WRITE
     ACCESS = CommandAccess.JUDGE
@@ -1142,6 +1241,211 @@ class UnStagger(BaseCommand):
             ),
             flags=hikari.MessageFlag.EPHEMERAL,
         )
+
+
+class DefineLimited(BaseCommand):
+    """Define a limited tournament"""
+
+    UPDATE = db.UpdateLevel.WRITE
+    ACCESS = CommandAccess.JUDGE
+    DESCRIPTION = "JUDGE: Define a limited format (no parameters removes all limits)"
+    OPTIONS = [
+        hikari.CommandOption(
+            type=hikari.OptionType.ATTACHMENT,
+            name="vdb_format",
+            description="A VDB format file",
+            is_required=False,
+        ),
+        hikari.CommandOption(
+            type=hikari.OptionType.ATTACHMENT,
+            name="ban_list",
+            description="A list of banned cards",
+            is_required=False,
+        ),
+        hikari.CommandOption(
+            type=hikari.OptionType.BOOLEAN,
+            name="single_clan",
+            description="Crypts need to be a single clan for 9 out of 12 cards",
+            is_required=False,
+        ),
+        hikari.CommandOption(
+            type=hikari.OptionType.BOOLEAN,
+            name="single_vampire",
+            description="Only one vampire allowed in crypt",
+            is_required=False,
+        ),
+    ]
+
+    async def __call__(
+        self,
+        vdb_format: Optional[hikari.Snowflake] = None,
+        ban_list: Optional[hikari.Snowflake] = None,
+        single_clan: Optional[bool] = False,
+        single_vampire: Optional[bool] = False,
+    ) -> None:
+        description = ""
+        if vdb_format and ban_list:
+            await self.create_or_edit_response(
+                "You can provide either a vdb_format or a ban_list, not both."
+            )
+            return
+        if vdb_format or ban_list:
+            data = self.interaction.resolved.attachments[vdb_format or ban_list]
+            data = await data.read()
+            data = data.decode(chardet.detect(data)["encoding"])
+        else:
+            self.tournament.include = []
+            self.tournament.exclude = []
+        if vdb_format:
+            if data.startswith("{"):
+                try:
+                    krcg.vtes.VTES.load()
+                except requests.HTTPError:
+                    raise CommandFailed("Failed to load VTES database.")
+                try:
+                    data = json.loads(data)
+                    self.vdb_format = data
+                except json.JSONDecodeError:
+                    raise CommandFailed("Invalid VDB format file.")
+                sets = set([k for k, v in data["sets"].items() if v])
+                allowed = set(
+                    [int(k) for k, v in data["allowed"]["crypt"].items() if v]
+                    + [int(k) for k, v in data["allowed"]["library"].items() if v]
+                )
+                banned = set(
+                    [int(k) for k, v in data["banned"]["crypt"].items() if v]
+                    + [int(k) for k, v in data["banned"]["library"].items() if v]
+                )
+                if allowed & banned:
+                    raise CommandFailed(
+                        "Invalid format: some cards are both allowed and banned"
+                    )
+                # hack for Anthology I
+                if "Anthology I" in sets:
+                    sets.pop("Anthology I")
+                    sets.add("Anthology")
+                    if not (101110 in allowed or "SoB" in sets):
+                        banned.add(101110)  # The Line
+                    if 102128 not in allowed:
+                        banned.add(102128)  # Vivenne Géroux
+                    if not (200030 in allowed or "EoG" in sets):
+                        banned.add(200030)  # Aisha az-Zahra
+                    if not (200081 in allowed or "SoB" in sets):
+                        banned.add(200081)  # André the Manipulator
+                    if not (200105 in allowed or "SoB" in sets):
+                        banned.add(200105)  # Anne-Marie Bourgeois
+                    if not (200123 in allowed or "EoG" in sets):
+                        banned.add(200123)  # Apolonia Czarnecki
+                    if not (200562 in allowed or "SoB" in sets):
+                        banned.add(200562)  # Hamid Mansour
+                    if not (200723 in allowed or "EoG" in sets):
+                        banned.add(200723)  # Joseph Fisher
+                    if not (200816 in allowed or "SoB" in sets):
+                        banned.add(200816)  # Laura Goldman
+                    if not (201321 in allowed or "EoG" in sets):
+                        banned.add(201321)  # Styles Margs
+                    if not (201465 in allowed or "SoB" in sets):
+                        banned.add(201465)  # Weirich Waldburg
+                sets = set([VTES_ABBREV_TO_SET[a] for a in sets])
+                if not sets and not allowed:
+                    self.tournament.include = []
+                    self.tournament.exclude = banned
+                else:
+                    cards = [c.id for c in krcg.vtes.VTES if set(c.sets.keys()) & sets]
+                    cards += allowed
+                    cards = sorted(set(cards) - banned)
+                    self.tournament.include = cards
+                    self.tournament.exclude = []
+                if sets:
+                    description += (
+                        "- The following sets are included:\n"
+                        + "\n".join(f"  - {s}" for s in sets)
+                        + "\n"
+                    )
+                if allowed and len(allowed) < 20:
+                    description += (
+                        f"- {'These additional' if sets else 'The following'} cards "
+                        "are included:\n"
+                        + "\n".join(f"  - {krcg.vtes.VTES[c].name}" for c in allowed)
+                        + "\n"
+                    )
+                elif allowed:
+                    description += (
+                        f"- {len(allowed)}{' additional' if sets else ''} "
+                        "cards are included\n"
+                    )
+                if banned and len(banned) < 20:
+                    description += (
+                        "- The following cards are excluded:\n"
+                        + "\n".join(f"  - {krcg.vtes.VTES[c].name}" for c in banned)
+                        + "\n"
+                    )
+                elif banned:
+                    description += f"- {len(banned)} cards are excluded\n"
+        else:
+            self.vdb_format = {}
+        if ban_list:
+            deck = krcg.deck.Deck.from_txt(io.StringIO(data), preface=False)
+            cards = [c.id for c in deck]
+            self.vdb_format = {}
+            self.tournament.include = []
+            self.tournament.exclude = cards
+            if cards and len(cards) < 20:
+                description += (
+                    "- The following cards are excluded:\n"
+                    + "\n".join(f"  - {c.name}" for c in deck)
+                    + "\n"
+                )
+            elif cards:
+                description += f"- {len(cards)} cards are excluded\n"
+        if single_clan is not None:
+            if single_clan:
+                self.tournament.flags |= tournament.TournamentFlag.SINGLE_CLAN
+                description += "- The crypt must have a single main clan at 75%\n"
+            else:
+                self.tournament.flags &= ~tournament.TournamentFlag.SINGLE_CLAN
+        if single_vampire is not None:
+            if single_vampire:
+                self.tournament.flags |= tournament.TournamentFlag.SINGLE_VAMPIRE
+                description += "- The crypt must have a single vampire\n"
+            else:
+                self.tournament.flags &= ~tournament.TournamentFlag.SINGLE_VAMPIRE
+        # Recheck existing decks
+        rejected_decks = []
+        for player in self.tournament.players.values():
+            if player.deck:
+                deck = krcg.deck.Deck()
+                deck.from_json(player.deck)
+                if self.tournament.check_deck(deck):
+                    player.deck = {}
+                    rejected_decks.append(player.vekn)
+        await self.update()
+        comp = []
+        if self.vdb_format:
+            comp = [
+                self.bot.rest.build_message_action_row().add_interactive_button(
+                    hikari.ButtonStyle.PRIMARY,
+                    "vdb-format",
+                    label="Download VDB format",
+                )
+            ]
+            COMPONENTS["vdb-format"] = DownloadVDBFormat
+        if rejected_decks:
+            description += "\n⚠️ **Some players had their deck invalidated:**\n" + (
+                "\n".join(f"- {self._player_display(vekn)}" for vekn in rejected_decks)
+            )
+        if description:
+            title = "Limited format defined"
+        else:
+            title = "Limits removed: Standard format"
+            description = "This tournament uses the Standard VEKN format."
+        embeds = _paginate_embed(hikari.Embed(title=title, description=description))
+        await self.create_or_edit_response(
+            embeds=embeds,
+            components=comp,
+        )
+        next_step = Announce.copy_from_interaction(self)
+        await next_step()
 
 
 class CloseTournament(BaseCommand):
@@ -1756,13 +2060,7 @@ class UploadDeck(BaseCommand):
             return
         if url:
             deck = krcg.deck.Deck.from_url(url)
-            self.tournament.add_player_deck(vekn, deck=deck, judge=judge)
-            await self.update()
-            await self.create_or_edit_response(
-                "Decklist copied. Note that if you make changes, "
-                "you need to upload it again.",
-                flags=hikari.MessageFlag.EPHEMERAL,
-            )
+            await self.check_and_add_deck(vekn, deck, judge)
             return
         if file:
             actual_file = self.interaction.resolved.attachments[file]
@@ -1771,12 +2069,7 @@ class UploadDeck(BaseCommand):
                 io.StringIO(data.decode(encoding=chardet.detect(data)["encoding"]))
             )
             deck.name = deck.name or actual_file.filename.split(".")[0]
-            self.tournament.add_player_deck(vekn, deck=deck, judge=judge)
-            await self.update()
-            await self.create_or_edit_response(
-                "Decklist copied.",
-                flags=hikari.MessageFlag.EPHEMERAL,
-            )
+            await self.check_and_add_deck(vekn, deck, judge)
             return
         component = self.bot.rest.build_modal_action_row().add_text_input(
             "decklist",
@@ -1788,6 +2081,52 @@ class UploadDeck(BaseCommand):
         COMPONENTS[custom_id] = partialclass(UploadDeck.DeckList, vekn, judge)
         await self.interaction.create_modal_response(
             "Register deck", custom_id, component
+        )
+
+    async def check_and_add_deck(self, vekn, deck: krcg.deck.Deck, judge: bool) -> None:
+        issues = self.tournament.check_deck(deck)
+        if issues:
+            comp = []
+            if self.tournament.is_limited() and self.vdb_format:
+                comp = [
+                    self.bot.rest.build_message_action_row().add_interactive_button(
+                        hikari.ButtonStyle.PRIMARY,
+                        "vdb-format",
+                        label="Download VDB format",
+                    )
+                ]
+                COMPONENTS["vdb-format"] = DownloadVDBFormat
+            description = ""
+            for issue in issues:
+                if isinstance(issue, tournament.DeckIssue.BannedCards):
+                    description += (
+                        "- Banned cards:\n"
+                        + "\n".join(f"  - {c}" for c in issue.cards)
+                        + "\n"
+                    )
+                elif isinstance(issue, tournament.DeckIssue.ExcludedCards):
+                    description += (
+                        "- Excluded cards:\n"
+                        + "\n".join(f"  - {c}" for c in issue.cards)
+                        + "\n"
+                    )
+                else:
+                    description += f"- {issue}\n"
+            await self.create_or_edit_response(
+                embed=hikari.Embed(
+                    title="⚠️ **Invalid Deck**",
+                    description=description,
+                ),
+                components=comp,
+                flags=hikari.MessageFlag.EPHEMERAL,
+            )
+            return
+        self.tournament.add_player_deck(vekn, deck=deck, judge=judge)
+        await self.update()
+        await self.create_or_edit_response(
+            "Decklist copied. Note that if you make changes, "
+            "you need to upload it again.",
+            flags=hikari.MessageFlag.EPHEMERAL,
         )
 
     class DeckList(BaseModal):
@@ -1814,12 +2153,8 @@ class UploadDeck(BaseCommand):
                     flags=hikari.MessageFlag.EPHEMERAL,
                 )
                 return
-            self.tournament.add_player_deck(self.vekn, deck=deck, judge=self.judge)
-            await self.update()
-            await self.create_or_edit_response(
-                "Decklist recorded.",
-                flags=hikari.MessageFlag.EPHEMERAL,
-            )
+            # hmpf, dirty workaround, we need better abstract class work overall
+            await UploadDeck.check_and_add_deck(self, self.vekn, deck, self.judge)
 
 
 class UploadDeckFor(UploadDeck):
@@ -2649,7 +2984,11 @@ class Announce(BaseCommand):
     OPTIONS = []
 
     async def __call__(self) -> None:
-        await self.deferred()
+        if self.interaction_context.has_response:
+            follow_up = True
+        else:
+            follow_up = False
+            await self.deferred()
         judges_channel_id = self.discord.channels["TEXT"][Role.JUDGE].id
         players_channel_id = self.discord.main_channel_id
         current_round = self.tournament.current_round
@@ -2945,37 +3284,51 @@ class Announce(BaseCommand):
                         f"with {Round.mention('add')}."
                     ),
                 )
+        comp = []
+        if self.tournament.is_limited() and self.vdb_format:
+            comp = [
+                self.bot.rest.build_message_action_row().add_interactive_button(
+                    hikari.ButtonStyle.PRIMARY,
+                    "vdb-format",
+                    label="Download VDB format",
+                )
+            ]
+            COMPONENTS["vdb-format"] = DownloadVDBFormat
         players_role_id = self.discord.roles[Role.PLAYER].id
-        if self.channel_id == players_channel_id:
+        if self.channel_id == players_channel_id and not follow_up:
             messages = [
                 self.create_or_edit_response(
                     embed=players_embed,
                     content=f"<@&{players_role_id}>",
                     role_mentions=[players_role_id],
+                    components=comp,
                 ),
                 self.bot.rest.create_message(judges_channel_id, embed=judges_embed),
             ]
-        elif self.channel_id == judges_channel_id:
+        elif self.channel_id == judges_channel_id and not follow_up:
             messages = [
                 self.bot.rest.create_message(
                     players_channel_id,
                     embed=players_embed,
                     content=f"<@&{players_role_id}>",
                     role_mentions=[players_role_id],
+                    components=comp,
                 ),
                 self.create_or_edit_response(embed=judges_embed),
             ]
         else:
             messages = [
-                self.create_or_edit_response("Announcement made"),
                 self.bot.rest.create_message(
                     players_channel_id,
                     embed=players_embed,
                     content=f"<@&{players_role_id}>",
                     role_mentions=[players_role_id],
+                    components=comp,
                 ),
                 self.bot.rest.create_message(judges_channel_id, embed=judges_embed),
             ]
+            if not follow_up:
+                messages.append(self.create_or_edit_response("Announcement made"))
         await asyncio.gather(*messages)
 
 

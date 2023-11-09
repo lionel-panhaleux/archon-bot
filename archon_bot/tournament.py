@@ -6,7 +6,7 @@ import math
 import os
 import random
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, Union
 
 import aiohttp
 import asgiref.sync
@@ -44,6 +44,8 @@ class TournamentFlag(enum.IntFlag):
     MULTIDECK = enum.auto()  # whether players can change deck between rounds
     REGISTER_BETWEEN = enum.auto()  # whether players can register between rounds
     STAGGERED = enum.auto()  # whether this is a staggered (6, 7, 11) tournament
+    SINGLE_CLAN = enum.auto()  # limited: 75% of the crypt must be a single clan
+    SINGLE_VAMPIRE = enum.auto()  # limited: single vampire in crypt
 
 
 class TournamentState(str, enum.Enum):
@@ -78,6 +80,70 @@ class PlayerStatus(str, enum.Enum):
     MISSING_DECK = "MISSING_DECK"
     WAITING = "WAITING"
     CHECKED_OUT = "CHECKED_OUT"
+
+
+class DeckIssue:
+    @dataclass
+    class ShortLibrary:
+        missing: int
+
+        def __str__(self) -> str:
+            return f"The library is too short: it misses {self.missing} cards"
+
+    @dataclass
+    class BigLibrary:
+        extra: int
+
+        def __str__(self) -> str:
+            return f"The library is too big: it has {self.missing} cards too many"
+
+    @dataclass
+    class ShortCrypt:
+        missing: int
+
+        def __str__(self) -> str:
+            return f"The crypt is too short: it misses {self.missing} cards"
+
+    @dataclass
+    class InvalidGrouping:
+        groups: list[int]
+
+        def __str__(self) -> str:
+            return f"Invalid grouping in crypt: {self.groups}"
+
+    @dataclass
+    class BannedCards:
+        cards: list[str]
+
+        def __str__(self) -> str:
+            return f"Banned cards: {self.cards}"
+
+    @dataclass
+    class ExcludedCards:
+        cards: list[str]
+
+        def __str__(self) -> str:
+            return f"Excluded cards: {self.cards}"
+
+    class SingleClanViolation:
+        def __str__(self) -> str:
+            return f"The crypt must have a 75% majority clan (9 out of 12)"
+
+    class SingleVampireViolation:
+        def __str__(self) -> str:
+            return f"The crypt must contain a single vampire"
+
+
+DeckIssueType = Union[
+    DeckIssue.ShortLibrary,
+    DeckIssue.BigLibrary,
+    DeckIssue.ShortCrypt,
+    DeckIssue.InvalidGrouping,
+    DeckIssue.BannedCards,
+    DeckIssue.ExcludedCards,
+    DeckIssue.SingleClanViolation,
+    DeckIssue.SingleVampireViolation,
+]
 
 
 @dataclass(order=True)
@@ -246,6 +312,8 @@ class Tournament:
     flags: TournamentFlag = 0
     max_rounds: int = 0
     current_round: int = 0
+    include: list[int] = field(default_factory=list)
+    exclude: list[int] = field(default_factory=list)
     state: TournamentState = TournamentState.REGISTRATION
     players: dict[str, Player] = field(default_factory=dict)
     dropped: dict[str, DropReason] = field(default_factory=dict)
@@ -256,6 +324,14 @@ class Tournament:
 
     def __bool__(self):
         return bool(self.name)
+
+    def is_limited(self):
+        return (
+            self.include
+            or self.exclude
+            or self.flags & TournamentFlag.SINGLE_CLAN
+            or self.flags & TournamentFlag.SINGLE_VAMPIRE
+        )
 
     async def add_player(
         self,
@@ -353,7 +429,6 @@ class Tournament:
         judge: bool = False,
     ) -> Player:
         vekn = self._safe_vekn(vekn)
-        # check deck is tournament legal
         if not deck:
             raise CommandFailed("No deck provided")
         if vekn not in self.players:
@@ -369,26 +444,57 @@ class Tournament:
             raise CommandFailed(
                 "Round in progress: wait for it to end to change your deck"
             )
-        library_count = deck.cards_count(lambda c: c.library)
-        crypt_count = deck.cards_count(lambda c: c.crypt)
-        if library_count < 60:
-            raise CommandFailed(f"Too few library cards ({library_count} < 60)")
-        if library_count > 90:
-            raise CommandFailed(f"Too many library cards ({library_count} > 90)")
-        if crypt_count < 12:
-            raise CommandFailed(f"Too few crypt cards ({crypt_count} < 12)")
-        groups = set(c.group for c, _ in deck.cards(lambda c: c.crypt))
-        groups.discard("ANY")
-        groups = list(groups)
-        if len(groups) > 2 or abs(int(groups[0]) - int(groups[-1])) > 1:
-            raise CommandFailed("Invalid grouping in crypt")
-        banned = [c.name for c, _ in deck.cards(lambda c: c.banned)]
-        if any(banned):
-            raise CommandFailed(f"Banned cards included: {banned}")
+        if self.check_deck(deck):
+            raise CommandFailed("Invalid deck")
         player = self.players[vekn]
         player.deck = deck.to_minimal_json()
         self.player_check_in(player=player)
         return player
+
+    def check_deck(
+        self,
+        deck: krcg.deck.Deck,
+    ) -> [DeckIssueType]:
+        """Check if the deck is tournament legal, return all deck issues"""
+        issues = []
+        library_count = deck.cards_count(lambda c: c.library)
+        crypt_count = deck.cards_count(lambda c: c.crypt)
+        if library_count < 60:
+            issues.append(DeckIssue.ShortLibrary(60 - library_count))
+        if library_count > 90:
+            issues.append(DeckIssue.BigLibrary(library_count - 90))
+        if crypt_count < 12:
+            issues.append(DeckIssue.ShortCrypt(12 - crypt_count))
+        groups = set(c.group for c, _ in deck.cards(lambda c: c.crypt))
+        groups.discard("ANY")
+        groups = list(groups)
+        if len(groups) > 2 or abs(int(groups[0]) - int(groups[-1])) > 1:
+            issues.append(DeckIssue.InvalidGrouping(groups))
+        banned = [c.name for c, _ in deck.cards(lambda c: c.banned)]
+        if any(banned):
+            issues.append(DeckIssue.BannedCards(banned))
+        if self.exclude:
+            excluded = [c.name for c, _ in deck.cards(lambda c: c.id in self.exclude)]
+            if any(excluded):
+                issues.append(DeckIssue.ExcludedCards(excluded))
+        if self.include:
+            excluded = [
+                c.name for c, _ in deck.cards(lambda c: c.id not in self.include)
+            ]
+            if any(excluded):
+                issues.append(DeckIssue.ExcludedCards(excluded))
+        if self.flags & TournamentFlag.SINGLE_CLAN:
+            clans = collections.Counter(
+                [c.clan for c, _ in deck.cards(lambda c: c.crypt)]
+            )
+            _, count = clans.most_common()
+            if count < crypt_count * 0.75:
+                issues.append(DeckIssue.SingleClanViolation())
+        if self.flags & TournamentFlag.SINGLE_VAMPIRE:
+            vampires = set([c.name for c, _ in deck.cards(lambda c: c.crypt)])
+            if len(vampires) > 1:
+                issues.append(DeckIssue.SingleVampireViolation())
+        return issues
 
     def player_check_in(
         self,

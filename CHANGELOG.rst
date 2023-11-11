@@ -1,4 +1,4 @@
-2.3 (unreleased)
+2.3 (2023-11-11)
 ----------------
 
 - Tournament limited format management (`/define-limited`), with VDB format files

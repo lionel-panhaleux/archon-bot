@@ -22,7 +22,7 @@ def dictas(cls: Dataclass, dic: dict) -> Dataclass:
 
     Note: Unions will match native JSON types (str, int, float, None) by default,
     and otherwise try all possible types in natural order (starting from the left).
-    Note: Optional[X] Union[X, NoneType]
+    Note: Optional[X] is Union[X, NoneType]
     """
 
     def instantitate_type(typ, val):

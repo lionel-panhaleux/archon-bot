@@ -364,8 +364,10 @@ class BaseInteraction:
         discord_data = {}
         if self.tournament:
             discord_data = self.tournament.extra.get("discord", {})
+            self.vdb_format = self.tournament.extra.get("vdb_format", {})
+        else:
+            self.vdb_format = {}
         self.discord = utils.dictas(DiscordExtra, discord_data)
-        self.vdb_format = self.tournament.extra.get("vdb_format", {})
         self.interaction_context = interaction_context or InteractionContext()
         if self.REQUIRES_TOURNAMENT and not self.tournament:
             raise CommandFailed(
@@ -3801,7 +3803,7 @@ class DownloadReports(BaseCommand):
 
     def _build_json(self, filename: str, data: str):
         buffer = io.StringIO()
-        json.dump(data, buffer)
+        json.dump(data, buffer, indent=2)
         buffer = io.BytesIO(buffer.getvalue().encode("utf-8"))
         return hikari.Bytes(buffer, filename, mimetype="application/json")
 
@@ -3860,7 +3862,7 @@ class DownloadReports(BaseCommand):
                     "vekn": player.vekn,
                     "finals_seed": player.seed,
                     "rounds": info.rounds,
-                    "score": info.score.to_json(),
+                    "score": asdict(info.score),
                     "deck": player.deck,
                 }
             )

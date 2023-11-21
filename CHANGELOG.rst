@@ -1,7 +1,7 @@
 2.5 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Fix decklists for /download-reports
 
 
 2.4 (2023-11-21)

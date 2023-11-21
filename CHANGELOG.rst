@@ -1,7 +1,8 @@
 2.4 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Fix decklists for /download-reports
+- Bump krcg version
 
 
 2.3 (2023-11-11)

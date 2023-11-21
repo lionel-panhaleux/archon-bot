@@ -3848,7 +3848,10 @@ class DownloadReports(BaseCommand):
     def _build_decks_json(self):
         """List of decks."""
         data = []
-        for player in sorted(self.tournament.players.values()):
+        for player in sorted(
+            self.tournament.players.values(),
+            key=lambda p: self._report_number.get(p.vekn, 0),
+        ):
             info = self.tournament.player_info(player.vekn)
             if not self._report_number.get(player.vekn, None):
                 continue

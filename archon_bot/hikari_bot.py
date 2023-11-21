@@ -185,22 +185,26 @@ def _parse_options(obj: type[T], config) -> Generator[hikari.CommandOption, None
         )
 
 
-def command(cls: type[T], config: Config) -> type[T]:
+def command(config: Config) -> type[T]:
     """Decorator to declare bot slash commands"""
-    if not config.description:
-        config.description = _doc_firstline(cls)
-    if "__call__" not in [m[0] for m in inspect.getmembers(cls)]:
-        raise ValueError(f"Decorated command {cls.__name__} has no __call__ method")
-    name = stringcase.spinalcase(cls.__qualname__.replace(".", " "))
-    if name in Register.DECLARED_COMMANDS:
-        raise ValueError(f"Command {name} is already declared somewhere else")
-    Register.DECLARED_COMMANDS[name] = CommandDecl(
-        name=stringcase.spinalcase(cls.__name__),
-        handler=cls,
-        options=list(_parse_options(cls, config.options_kwargs)),
-        config=config,
-    )
-    return cls
+
+    def decorate_command(cls: type[T]):
+        if not config.description:
+            config.description = _doc_firstline(cls)
+        if "__call__" not in [m[0] for m in inspect.getmembers(cls)]:
+            raise ValueError(f"Decorated command {cls.__name__} has no __call__ method")
+        name = stringcase.spinalcase(cls.__qualname__.replace(".", " "))
+        if name in Register.DECLARED_COMMANDS:
+            raise ValueError(f"Command {name} is already declared somewhere else")
+        Register.DECLARED_COMMANDS[name] = CommandDecl(
+            name=stringcase.spinalcase(cls.__name__),
+            handler=cls,
+            options=list(_parse_options(cls, config.options_kwargs)),
+            config=config,
+        )
+        return cls
+
+    return decorate_command
 
 
 def sub_command(cls: type[T], config: Config) -> type[T]:
@@ -258,14 +262,13 @@ def _get_command(cls: type[T]) -> CommandDecl:
     return Register.DECLARED[name]
 
 
-class MetaInteraction(type):
-    """Metaclass to register static interactions."""
+class MetaCommand(type):
+    """Metaclass to register static commands."""
 
     def __new__(cls, name, bases, dict_):
-        command_name = stringcase.spinalcase(name)
-        if command_name in Register.DECLARED:
-            raise ValueError(f"Command {name} is already registered")
         klass = super().__new__(cls, name, bases, dict_)
+        if "__call__" not in [m[0] for m in inspect.getmembers(cls)]:
+            return klass
         if hasattr(klass, "config"):
             config = klass.config
         else:
@@ -295,6 +298,10 @@ class InteractionContext:
     @property
     def author_id(self):
         return self.interaction.author_id
+
+    @property
+    def guild_id(self):
+        return self.interaction.guild_id
 
 
 def _split_text(s, limit):
@@ -393,7 +400,6 @@ class RoleDecl:
     name: str
     user_ids: list[hikari.Snowflakeish]
     channel_keys: list[Hashable]  # keys in the channel registry if any
-    global_prefix: bool = True  # Use of global bot prefix over interaction prefix
     mentionable: bool = True
     color: hikari.Colorish | None = None
     hoist: bool = False
@@ -410,15 +416,10 @@ class Interaction(hikari.RESTAware):
         self.attachments: list[hikari.Attachment] = []
         self.choices: list[special.AutocompleteChoiceBuilder] = []
         self.modal: Optional[ModalResponse] = None
-        self._prefix: str | None = None
 
     @property
     def rest(self):
         return self.ctx.bot.rest
-
-    @property
-    def prefix(self):
-        return self._prefix or Register.PREFIX
 
     async def prepare(self):
         if self.cfg.deferred and not self.ctx.has_response:
@@ -612,12 +613,11 @@ class Interaction(hikari.RESTAware):
         # compare what exists with what is registered
         registered = {c.id for c in registry.values()}
         logger.debug("registered channels: %s", registry)
+        expected_names = {e.name for e in expected.values()}
         existing = await self.rest.fetch_guild_channels(self.ctx.interaction.guild_id)
         if self.ctx.category_id:
             existing = [c for c in existing if c.parent_id == self.ctx.category_id]
-        existing = [
-            c for c in existing if c.name.lower().startswith(self.cfg.prefix + "-")
-        ]
+        existing = [c for c in existing if c.name in expected_names]
         logger.debug("existing channels on discord: %s", existing)
         to_delete = [c for c in existing if c.id not in registered]
         if to_delete:
@@ -682,12 +682,6 @@ class Interaction(hikari.RESTAware):
             self.discord.channels[key] = DiscordChannel.from_hikari(res)
         logger.debug("channels aligned")
 
-    async def _get_role_name(self, declaration: RoleDecl):
-        if declaration.global_prefix:
-            return f"{Register.BOT_NAME}-{declaration.name}"
-        else:
-            return f"{self.prefix}-{declaration.name}"
-
     async def align_roles(
         self,
         expected: dict[Hashable, RoleDecl],
@@ -710,7 +704,7 @@ class Interaction(hikari.RESTAware):
             )
             del registry[key]
         # compare what exists with what is registered
-        expected_names = {self._get_role_name(r) for r in expected.values()}
+        expected_names = {r.name for r in expected.values()}
         existing = await self.rest.fetch_roles(self.guild_id)
         existing = [r for r in existing if r.name in expected_names]
         logger.debug("existing roles on discord: %s", existing)
@@ -794,7 +788,7 @@ class Interaction(hikari.RESTAware):
         logger.debug("roles aligned")
 
 
-class Command(Interaction):
+class Command(Interaction, metaclass=MetaCommand):
     @classmethod
     def mention(cls):
         name = " ".join(stringcase.spinalcase(a) for a in cls.__qualname__.split("."))

@@ -10,7 +10,7 @@ import logging
 import random
 import re
 from dataclasses import dataclass, field, asdict
-from typing import Iterable, List, Optional, Union
+from typing import Iterable, List, Optional, Union, Any
 
 
 import hikari
@@ -32,6 +32,9 @@ from . import db
 from . import tournament
 from . import utils
 from . import permissions as perm
+
+import psycopg.types
+from . import hikari_bot
 
 logger = logging.getLogger()
 CommandFailed = tournament.CommandFailed
@@ -93,66 +96,66 @@ VTES_ABBREV_TO_SET = {
 }
 
 
-def build_command_tree(rest_api):
-    """Hikari commands to submit to the Discord server on boot."""
-    commands = {}
-    for name, klass in COMMANDS_TO_REGISTER.items():
-        command = rest_api.slash_command_builder(name, klass.DESCRIPTION)
-        for option in klass.OPTIONS:
-            command = command.add_option(option)
-        commands[klass] = command
+# def build_command_tree(rest_api):
+#     """Hikari commands to submit to the Discord server on boot."""
+#     commands = {}
+#     for name, klass in COMMANDS_TO_REGISTER.items():
+#         command = rest_api.slash_command_builder(name, klass.DESCRIPTION)
+#         for option in klass.OPTIONS:
+#             command = command.add_option(option)
+#         commands[klass] = command
 
-    for klass, sub_commands in SUB_COMMANDS.items():
-        for name, sub_klass in sub_commands.items():
-            if any(
-                opt.type == hikari.OptionType.SUB_COMMAND for opt in sub_klass.OPTIONS
-            ):
-                assert all(
-                    opt.type == hikari.OptionType.SUB_COMMAND
-                    for opt in sub_klass.OPTIONS
-                ), "if one option is a subcommand, they all should be"
-                option_type = hikari.OptionType.SUB_COMMAND_GROUP
-            else:
-                option_type = hikari.OptionType.SUB_COMMAND
+#     for klass, sub_commands in SUB_COMMANDS.items():
+#         for name, sub_klass in sub_commands.items():
+#             if any(
+#                 opt.type == hikari.OptionType.SUB_COMMAND for opt in sub_klass.OPTIONS
+#             ):
+#                 assert all(
+#                     opt.type == hikari.OptionType.SUB_COMMAND
+#                     for opt in sub_klass.OPTIONS
+#                 ), "if one option is a subcommand, they all should be"
+#                 option_type = hikari.OptionType.SUB_COMMAND_GROUP
+#             else:
+#                 option_type = hikari.OptionType.SUB_COMMAND
 
-            option = hikari.CommandOption(
-                type=option_type,
-                name=name,
-                description=sub_klass.DESCRIPTION,
-                options=sub_klass.OPTIONS,
-            )
-            commands[klass] = commands[klass].add_option(option)
+#             option = hikari.CommandOption(
+#                 type=option_type,
+#                 name=name,
+#                 description=sub_klass.DESCRIPTION,
+#                 options=sub_klass.OPTIONS,
+#             )
+#             commands[klass] = commands[klass].add_option(option)
 
-    return list(commands.values())
-
-
-class MetaCommand(type):
-    """Metaclass to register commands."""
-
-    COMMANDS_TO_REGISTER = {}
-
-    def __new__(cls, name, bases, dict_):
-        command_name = stringcase.spinalcase(name)
-        if command_name in COMMANDS_TO_REGISTER:
-            raise ValueError(f"Command {name} is already registered")
-        klass = super().__new__(cls, name, bases, dict_)
-        if command_name == "base-command":
-            return klass
-        if klass.GROUP:
-            SUB_COMMANDS.setdefault(klass.GROUP, {})
-            SUB_COMMANDS[klass.GROUP][command_name] = klass
-        else:
-            COMMANDS_TO_REGISTER[command_name] = klass
-        return klass
+#     return list(commands.values())
 
 
-class CommandAccess(str, enum.Enum):
-    """For now, only the Judge access is controlled."""
+# class MetaCommand(type):
+#     """Metaclass to register commands."""
 
-    PUBLIC = "PUBLIC"
-    ADMIN = "ADMIN"
-    PLAYER = "PLAYER"
-    JUDGE = "JUDGE"
+#     COMMANDS_TO_REGISTER = {}
+
+#     def __new__(cls, name, bases, dict_):
+#         command_name = stringcase.spinalcase(name)
+#         if command_name in COMMANDS_TO_REGISTER:
+#             raise ValueError(f"Command {name} is already registered")
+#         klass = super().__new__(cls, name, bases, dict_)
+#         if command_name == "base-command":
+#             return klass
+#         if klass.GROUP:
+#             SUB_COMMANDS.setdefault(klass.GROUP, {})
+#             SUB_COMMANDS[klass.GROUP][command_name] = klass
+#         else:
+#             COMMANDS_TO_REGISTER[command_name] = klass
+#         return klass
+
+
+# class CommandAccess(str, enum.Enum):
+#     """For now, only the Judge access is controlled."""
+
+#     PUBLIC = "PUBLIC"
+#     ADMIN = "ADMIN"
+#     PLAYER = "PLAYER"
+#     JUDGE = "JUDGE"
 
 
 class Role(str, enum.Enum):
@@ -164,82 +167,82 @@ class Role(str, enum.Enum):
     ROOT_JUDGE = "Root Judge"
 
 
-def _split_text(s, limit):
-    """Utility function to split a text at a convenient spot."""
-    if len(s) < limit:
-        return s, ""
-    index = s.rfind("\n", 0, limit)
-    rindex = index + 1
-    if index < 0:
-        index = s.rfind(" ", 0, limit)
-        rindex = index + 1
-        if index < 0:
-            index = limit
-            rindex = index
-    return s[:index], s[rindex:]
+# def _split_text(s, limit):
+#     """Utility function to split a text at a convenient spot."""
+#     if len(s) < limit:
+#         return s, ""
+#     index = s.rfind("\n", 0, limit)
+#     rindex = index + 1
+#     if index < 0:
+#         index = s.rfind(" ", 0, limit)
+#         rindex = index + 1
+#         if index < 0:
+#             index = limit
+#             rindex = index
+#     return s[:index], s[rindex:]
 
 
-def _paginate_embed(embed: hikari.Embed) -> List[hikari.Embed]:
-    """Utility function to paginate a Discord Embed"""
-    embeds = []
-    fields = []
-    base_title = embed.title
-    description = ""
-    page = 1
-    logger.debug("embed: %s", embed)
-    while embed:
-        if embed.description:
-            embed.description, description = _split_text(embed.description, 2048)
-        while embed.fields and (len(embed.fields) > 15 or description):
-            fields.append(embed.fields[-1])
-            embed.remove_field(-1)
-        embeds.append(embed)
-        if description or fields:
-            page += 1
-            embed = hikari.Embed(
-                title=base_title + f" ({page})",
-                description=description,
-            )
-            for f in fields:
-                embed.add_field(name=f.name, value=f.value, inline=f.is_inline)
-            description = ""
-            fields = []
-        else:
-            embed = None
-    if len(embeds) > 10:
-        raise RuntimeError("Too many embeds")
-    return embeds
+# def _paginate_embed(embed: hikari.Embed) -> List[hikari.Embed]:
+#     """Utility function to paginate a Discord Embed"""
+#     embeds = []
+#     fields = []
+#     base_title = embed.title
+#     description = ""
+#     page = 1
+#     logger.debug("embed: %s", embed)
+#     while embed:
+#         if embed.description:
+#             embed.description, description = _split_text(embed.description, 2048)
+#         while embed.fields and (len(embed.fields) > 15 or description):
+#             fields.append(embed.fields[-1])
+#             embed.remove_field(-1)
+#         embeds.append(embed)
+#         if description or fields:
+#             page += 1
+#             embed = hikari.Embed(
+#                 title=base_title + f" ({page})",
+#                 description=description,
+#             )
+#             for f in fields:
+#                 embed.add_field(name=f.name, value=f.value, inline=f.is_inline)
+#             description = ""
+#             fields = []
+#         else:
+#             embed = None
+#     if len(embeds) > 10:
+#         raise RuntimeError("Too many embeds")
+#     return embeds
 
 
-class InteractionContext:
-    """In case of interaction chaining, this context is passed unchanged.
+# class InteractionContext:
+#     """In case of interaction chaining, this context is passed unchanged.
 
-    Track if we have an initial response already, to know if we should create or edit
-    """
+#     Track if we have an initial response already, to know if we should create or edit
+#     """
 
-    def __init__(self):
-        self.has_response = False
-
-
-@dataclass
-class DiscordRole:
-    id: hikari.Snowflake
-    name: str
-
-    @classmethod
-    def from_hikari(cls, role: hikari.PartialRole):
-        return cls(id=role.id, name=role.name)
+#     def __init__(self):
+#         self.has_response = False
 
 
-@dataclass
-class DiscordChannel:
-    id: hikari.Snowflake
-    name: str
-    type: hikari.ChannelType
+# @dataclass
+# class DiscordRole:
+#     id: hikari.Snowflake
+#     name: str
 
-    @classmethod
-    def from_hikari(cls, channel: hikari.PartialChannel):
-        return cls(id=channel.id, name=channel.name, type=channel.type)
+#     @classmethod
+#     def from_hikari(cls, role: hikari.PartialRole):
+#         return cls(id=role.id, name=role.name)
+
+
+# @dataclass
+# class DiscordChannel:
+#     id: hikari.Snowflake
+#     name: str
+#     type: hikari.ChannelType
+
+#     @classmethod
+#     def from_hikari(cls, channel: hikari.PartialChannel):
+#         return cls(id=channel.id, name=channel.name, type=channel.type)
 
 
 @dataclass
@@ -249,10 +252,8 @@ class DiscordExtra:
     players: dict[hikari.Snowflake, str] = field(default_factory=dict)
     judges: list[hikari.Snowflake] = field(default_factory=list)
     spectators: list[hikari.Snowflake] = field(default_factory=list)
-    roles: dict[Union[Role, int], DiscordRole] = field(default_factory=dict)
-    channels: dict[str, dict[Union[Role, int], DiscordChannel]] = field(
-        default_factory=dict
-    )
+    roles: dict[str, hikari_bot.DiscordRole] = field(default_factory=dict)
+    channels: dict[str, hikari_bot.DiscordChannel] = field(default_factory=dict)
 
     def get_vekn(self, discord_id: hikari.Snowflake) -> Optional[str]:
         return self.players.get(discord_id, None)
@@ -889,23 +890,126 @@ class BaseModal(BaseInteraction):
         self.interaction_context.has_response = True
 
 
+class BaseCommand(hikari_bot.Interaction):
+    # cache for READ_ONLY operations
+    TOURNAMENTS: dict[(int, int), tournament.Tournament] = {}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tournament: tournament.Tournament | None = None
+        self.discord: DiscordExtra | None = None
+        self.vdb_format: dict[str, Any] | None = None
+
+    async def update(self):
+        """Update tournament data. Caches the data."""
+        key = (self.ctx.guild_id, self.ctx.category_id)
+        logger.debug("Update tournament %s: %s", key, self.tournament)
+        if len(self.TOURNAMENTS) > 5:  # 5 tournaments in cache should be enough
+            keep = {k: v for k, v in random.sample(self.TOURNAMENTS.items(), 4)}
+            self.TOURNAMENTS.clear()
+            self.TOURNAMENTS.update(keep)
+        # beware to update the cache before asking for a write
+        self.tournament.extra["discord"] = asdict(self.discord)
+        self.tournament.extra["vdb_format"] = self.vdb_format
+        self.TOURNAMENTS[key] = self.tournament
+        async with self.ctx.db_connection.cursor() as cursor:
+            await cursor.execute(
+                "UPDATE tournament SET data=%s "
+                "WHERE active=TRUE AND guild=%s AND category=%s",
+                [
+                    psycopg.types.json.Json(asdict(self.tournament)),
+                    str(self.ctx.guild_id),
+                    str(self.ctx.category_id) if self.ctx.category_id else "",
+                ],
+            )
+
+    async def init(self):
+        """Set the tournament object. Uses cached data if available."""
+        key = (self.ctx.guild_id, self.ctx.category_id)
+        # do not query DB for READ_ONLY if data is in the cache
+        if self.cfg.update < db.UpdateLevel.WRITE and key in self.TOURNAMENTS:
+            self.tournament = self.TOURNAMENTS[key]
+        else:
+            async with self.ctx.db_connection.cursor() as cursor:
+                await cursor.execute(
+                    "SELECT data from tournament "
+                    "WHERE active=TRUE AND guild=%s AND category=%s"
+                    + (
+                        " FOR UPDATE"
+                        if self.cfg.update > db.UpdateLevel.READ_ONLY
+                        else ""
+                    ),
+                    [
+                        str(self.ctx.guild_id),
+                        str(self.ctx.category_id) if self.ctx.category_id else "",
+                    ],
+                )
+                res = await cursor.fetchone()
+                if res:
+                    self.tournament = utils.dictas(tournament.Tournament, res[0])
+                    self.discord = utils.dictas(
+                        DiscordExtra, self.tournament.extra["discord"]
+                    )
+                    self.vdb_format = self.tournament.extra["vdb_format"]
+                    # beware of concurrency with locked write operations here
+                    # it is OK to set the cache if it is empty, but do not overwrite
+                    # a locked write cache update with the return of a previous read
+                    if key not in self.TOURNAMENTS:
+                        self.TOURNAMENTS[key] = self.tournament
+
+    async def align(self):
+        roles = {}
+        channels = {}
+
+        roles[Role.ROOT_JUDGE] = hikari_bot.RoleDecl(name="Archon-Judge")
+        roles[Role.SPECTATOR] = hikari_bot.RoleDecl(
+            name=f"{self.discord.prefix}-Spectator", user_ids=self.discord.spectators
+        )
+        judge_voice = f"{Role.JUDGE}-{hikari.ChannelType.GUILD_VOICE}"
+        judge_text = f"{Role.JUDGE}-{hikari.ChannelType.GUILD_TEXT}"
+        roles[Role.JUDGE] = hikari_bot.RoleDecl(
+            name=f"{self.discord.prefix}-Judge",
+            user_ids=self.discord.judges,
+            channel_keys=[judge_voice, judge_text],
+        )
+        channels[judge_voice] = hikari_bot.ChannelDecl(
+            type_=hikari.ChannelType.GUILD_VOICE,
+            name=f"{self.discord.prefix}-Judges",
+            permissions=[],
+        )
+        channels[judge_text] = hikari_bot.ChannelDecl(
+            type_=hikari.ChannelType.GUILD_TEXT,
+            name=f"{self.discord.prefix.lower()}-judges",
+            permissions=[],
+        )
+
+        if self.tournament.rounds:
+            for table, players in enumerate(
+                self.tournament.rounds[-1].seating.iter_tables(), 1
+            ):
+                players = [self.discord.get_discord_id(p) for p in players]
+                players = [p for p in players if p]
+                roles[table] = hikari_bot.RoleDecl(
+                    name=f"{self.discord.prefix}-Table-{table}",
+                    user_ids=players,
+                    channel_keys=[table],
+                )
+                channels[table] = hikari_bot.ChannelDecl(
+                    type_=hikari.ChannelType.GUILD_VOICE,
+                    name=f"Table-{table}",
+                    permissions=[],
+                )
+
+
+@hikari_bot.command(hikari_bot.Config(update=db.UpdateLevel.EXCLUSIVE_WRITE))
 class OpenTournament(BaseCommand):
     """Open the tournament"""
 
-    UPDATE = db.UpdateLevel.EXCLUSIVE_WRITE
-    REQUIRES_TOURNAMENT = False
-    DESCRIPTION = "ADMIN: Open a new event or tournament"
-    OPTIONS = [
-        hikari.CommandOption(
-            type=hikari.OptionType.STRING,
-            name="name",
-            description="The tournament name",
-            is_required=True,
-        ),
-    ]
-
     async def __call__(self, name: str) -> None:
-        """Open the tournament, create channels and roles, then configure (chain)"""
+        """ADMIN: Open a new event or tournament
+
+        - name: The tournament name
+        """
         if self.tournament:
             raise CommandFailed("A tournament is already open here")
         await self.deferred(flags=hikari.MessageFlag.EPHEMERAL)
@@ -927,8 +1031,7 @@ class OpenTournament(BaseCommand):
             asdict(self.tournament),
         )
         # now configure the tournament
-        next_step = ConfigureTournament.copy_from_interaction(self)
-        await next_step()
+        await self.chain(ConfigureTournament)
 
 
 class ConfigureTournament(BaseCommand):

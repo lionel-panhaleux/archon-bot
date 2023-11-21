@@ -11,11 +11,16 @@ TEXT = (
     | hikari.Permissions.SEND_MESSAGES_IN_THREADS
     | hikari.Permissions.ADD_REACTIONS
 )
-SPECTATE_VOICE = hikari.Permissions.VIEW_CHANNEL | hikari.Permissions.CONNECT
+SPECTATE_VOICE = (
+    hikari.Permissions.VIEW_CHANNEL 
+    | hikari.Permissions.CONNECT
+    | hikari.Permissions.READ_MESSAGE_HISTORY
+)
 VOICE = (
     hikari.Permissions.VIEW_CHANNEL
     | hikari.Permissions.CONNECT
     | hikari.Permissions.SPEAK
+    | TEXT
 )
 JUDGE_VOICE = (
     hikari.Permissions.VIEW_CHANNEL
@@ -24,6 +29,7 @@ JUDGE_VOICE = (
     | hikari.Permissions.PRIORITY_SPEAKER
     | hikari.Permissions.MUTE_MEMBERS
     | hikari.Permissions.DEAFEN_MEMBERS
+    | TEXT
 )
 ARCHON = (
     hikari.Permissions.VIEW_CHANNEL
@@ -34,4 +40,5 @@ ARCHON = (
     | hikari.Permissions.SEND_MESSAGES_IN_THREADS
     | hikari.Permissions.ADD_REACTIONS
     | hikari.Permissions.ATTACH_FILES
+    | TEXT
 )

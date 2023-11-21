@@ -1,4 +1,4 @@
-2.4 (unreleased)
+2.4 (2023-11-21)
 ----------------
 
 - Fix decklists for /download-reports

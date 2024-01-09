@@ -1,4 +1,4 @@
-2.6 (unreleased)
+2.6 (2024-01-09)
 ----------------
 
 - BUGFIX: `players-list` now works when a player has been dropped

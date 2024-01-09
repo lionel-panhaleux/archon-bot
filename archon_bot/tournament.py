@@ -751,7 +751,7 @@ class Tournament:
         if len(incorrect) > 1:
             raise CommandFailed(f"Incorrect score for tables {incorrect}")
         if len(incorrect) > 0:
-            raise CommandFailed(f"Incorrect score for table {incorrect[0]}")
+            raise CommandFailed(f"Incorrect score for table {incorrect.pop()}")
         if self.rounds[-1].finals:
             self.state = TournamentState.FINISHED
             self._reset_checkin()

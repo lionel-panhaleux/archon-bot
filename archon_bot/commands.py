@@ -3717,6 +3717,7 @@ def status_icon(status: tournament.PlayerStatus) -> str:
         tournament.PlayerStatus.CHECKIN_REQUIRED: "⌛",  # hourglass
         tournament.PlayerStatus.WAITING: "",
         tournament.PlayerStatus.CHECKED_OUT: "❌",  # red cross
+        tournament.PlayerStatus.DROPPED_OUT: "🛑",  # red octogon
     }[status]
 
 

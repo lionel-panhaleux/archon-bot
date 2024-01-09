@@ -1,8 +1,8 @@
 2.6 (unreleased)
 ----------------
 
-- Nothing changed yet.
-
+- BUGFIX: `players-list` now works when a player has been dropped
+- BUGFIX: `round finish` now displays a sensible error when a single table has an invalid score
 
 2.5 (2023-11-21)
 ----------------

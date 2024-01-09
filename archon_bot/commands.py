@@ -1214,7 +1214,7 @@ class Stagger(BaseCommand):
         await self.update()
         await self.create_or_edit_response(
             embed=hikari.Embed(
-                title=f"Staggered Tournament",
+                title="Staggered Tournament",
                 description=(
                     "This tournament is now staggered: the players list "
                     "cannot be changed anymore.\n"
@@ -1238,7 +1238,7 @@ class UnStagger(BaseCommand):
         await self.update()
         await self.create_or_edit_response(
             embed=hikari.Embed(
-                title=f"Standard Tournament",
+                title="Standard Tournament",
                 description="The tournament is back to a standard structure.",
             ),
             flags=hikari.MessageFlag.EPHEMERAL,
@@ -1708,14 +1708,11 @@ class RegisterPlayer(BaseCommand):
         self,
         vekn: Optional[str] = None,
         name: Optional[str] = None,
-        decklist: Optional[str] = None,
         user: Optional[hikari.Snowflake] = None,
     ) -> None:
         await self.deferred()
         name = name and name[:4096]
         prev_vekn = None
-        if decklist:
-            deck = krcg.deck.Deck.from_url(decklist)
         if user:
             if vekn:
                 other_discord = self.discord.get_discord_id(vekn)
@@ -2151,7 +2148,7 @@ class UploadDeck(BaseCommand):
             deck.name = deck.name or "No Name"
             if not deck:
                 await self.create_or_edit_response(
-                    f"**Error: Invalid decklist**",
+                    "**Error: Invalid decklist**",
                     flags=hikari.MessageFlag.EPHEMERAL,
                 )
                 return

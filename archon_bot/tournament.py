@@ -127,11 +127,11 @@ class DeckIssue:
 
     class SingleClanViolation:
         def __str__(self) -> str:
-            return f"The crypt must have a 75% majority clan (9 out of 12)"
+            return "The crypt must have a 75% majority clan (9 out of 12)"
 
     class SingleVampireViolation:
         def __str__(self) -> str:
-            return f"The crypt must contain a single vampire"
+            return "The crypt must contain a single vampire"
 
 
 DeckIssueType = Union[

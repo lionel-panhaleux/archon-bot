@@ -3534,7 +3534,7 @@ class Standings(BaseCommand):
         embed = hikari.Embed(
             title="Standings",
             description="\n".join(
-                ("*WINNER* " if winner == vekn else f"{rank}. ")
+                ("- *WINNER* " if winner == vekn else f"- {rank}. ")
                 + f"{self._player_display(vekn)} {score}"
                 for rank, vekn, score in ranking
             ),

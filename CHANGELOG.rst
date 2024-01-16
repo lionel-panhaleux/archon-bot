@@ -1,7 +1,7 @@
 2.7 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- BUGIFX: `standings` now displays the correct rank
 
 
 2.6 (2024-01-09)

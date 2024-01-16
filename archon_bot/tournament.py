@@ -14,7 +14,6 @@ import krcg.deck
 import krcg.seating
 import krcg.utils
 
-
 logger = logging.getLogger()
 ITERATIONS = 30000
 VEKN_LOGIN = os.getenv("VEKN_LOGIN")
@@ -146,7 +145,7 @@ DeckIssueType = Union[
 ]
 
 
-@dataclass(order=True)
+@dataclass(order=True, eq=True)
 class Score:
     gw: int = 0
     vp: float = 0.0
@@ -872,7 +871,7 @@ class Tournament:
                     winner == a[0],
                     a[1],
                     # put the seed here, so if you win the toss once, you keep your win
-                    # 0 would go before negative seed numbers, math.inf always goes last
+                    # 0 would go before negative seed numbers, -math.inf goes last
                     -self.players[a[0]].seed or -math.inf,
                     # toss
                     random.random() if toss else a[0],
@@ -887,7 +886,7 @@ class Tournament:
                 elif last != score:
                     rank = j
                 last = score
-            if vekn in self.dropped and last is not None:
+            elif last is not None:
                 last = None
                 rank = j
             ranking.append((rank, vekn, score))

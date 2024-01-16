@@ -1,4 +1,4 @@
-2.7 (unreleased)
+2.7 (2024-01-16)
 ----------------
 
 - BUGIFX: `standings` now displays the correct rank

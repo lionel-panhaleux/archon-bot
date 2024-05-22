@@ -11,7 +11,7 @@ import random
 import re
 from dataclasses import dataclass, field, asdict
 from typing import Iterable, List, Optional, Union
-
+import zipfile
 
 import hikari
 import hikari.channels
@@ -3792,6 +3792,16 @@ class DownloadReports(BaseCommand):
             reports.extend(f for f in self._build_rounds_csvs())
             if self.tournament.state == tournament.TournamentState.FINISHED:
                 reports.append(self._build_finals_csv())
+        # Discord limits to 10 attachments: zip if there are more (eg. league)
+        if len(reports) > 10:
+            tmp = io.BytesIO()
+            with zipfile.ZipFile(tmp, "w") as archive:
+                for r in reports:
+                    archive.writestr(r.filename, r.data)
+                tmp.seek(0)
+            reports = [
+                hikari.Bytes(tmp.getvalue(), "reports.zip", mimetype="application/zip")
+            ]
         await self.create_or_edit_response(
             embed=hikari.Embed(
                 title="Reports",
@@ -3804,7 +3814,9 @@ class DownloadReports(BaseCommand):
             flags=hikari.MessageFlag.EPHEMERAL,
         )
 
-    def _build_csv(self, filename: str, it: Iterable[str], columns=None):
+    def _build_csv(
+        self, filename: str, it: Iterable[str], columns=None
+    ) -> hikari.Bytes:
         buffer = io.StringIO()
         writer = csv.writer(buffer)
         if columns:
@@ -3813,13 +3825,13 @@ class DownloadReports(BaseCommand):
         buffer = io.BytesIO(buffer.getvalue().encode("utf-8"))
         return hikari.Bytes(buffer, filename, mimetype="text/csv")
 
-    def _build_json(self, filename: str, data: str):
+    def _build_json(self, filename: str, data: str) -> hikari.Bytes:
         buffer = io.StringIO()
         json.dump(data, buffer, indent=2)
         buffer = io.BytesIO(buffer.getvalue().encode("utf-8"))
         return hikari.Bytes(buffer, filename, mimetype="application/json")
 
-    def _build_results_csv(self):
+    def _build_results_csv(self) -> hikari.Bytes:
         _winner, ranking = self.tournament.standings()
         data = []
         report_number = 1
@@ -3859,7 +3871,7 @@ class DownloadReports(BaseCommand):
             ],
         )
 
-    def _build_decks_json(self):
+    def _build_decks_json(self) -> hikari.Bytes:
         """List of decks."""
         data = []
         for player in sorted(
@@ -3893,7 +3905,7 @@ class DownloadReports(BaseCommand):
             name.append("")
         return name
 
-    def _build_methuselahs_csv(self):
+    def _build_methuselahs_csv(self) -> hikari.Bytes:
         data = []
         for player in sorted(
             self.tournament.players.values(),
@@ -3924,7 +3936,7 @@ class DownloadReports(BaseCommand):
             )
         return self._build_csv("Methuselahs.csv", data)
 
-    def _build_rounds_csvs(self):
+    def _build_rounds_csvs(self) -> hikari.Bytes:
         for i, round in enumerate(self.tournament.rounds, 1):
             if not round.results:
                 break
@@ -3948,7 +3960,7 @@ class DownloadReports(BaseCommand):
                     data.append(["", "", "", "", ""])
             yield self._build_csv(f"Round-{i}.csv", data)
 
-    def _build_finals_csv(self):
+    def _build_finals_csv(self) -> hikari.Bytes:
         data = []
         round = self.tournament.rounds[-1]
         if not round.finals:

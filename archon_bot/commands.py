@@ -986,32 +986,40 @@ class ConfigureTournament(BaseCommand):
             components = [
                 self.bot.rest.build_message_action_row()
                 .add_interactive_button(
-                    hikari.ButtonStyle.SECONDARY
-                    if vekn_required
-                    else hikari.ButtonStyle.PRIMARY,
+                    (
+                        hikari.ButtonStyle.SECONDARY
+                        if vekn_required
+                        else hikari.ButtonStyle.PRIMARY
+                    ),
                     "vekn-required",
                     label=("No VEKN" if vekn_required else "Require VEKN"),
                 )
                 .add_interactive_button(
-                    hikari.ButtonStyle.SECONDARY
-                    if decklist_required
-                    else hikari.ButtonStyle.PRIMARY,
+                    (
+                        hikari.ButtonStyle.SECONDARY
+                        if decklist_required
+                        else hikari.ButtonStyle.PRIMARY
+                    ),
                     "decklist-required",
                     label=("No Decklist" if decklist_required else "Require Decklist"),
                 )
                 .add_interactive_button(
-                    hikari.ButtonStyle.SECONDARY
-                    if checkin_each_round
-                    else hikari.ButtonStyle.PRIMARY,
+                    (
+                        hikari.ButtonStyle.SECONDARY
+                        if checkin_each_round
+                        else hikari.ButtonStyle.PRIMARY
+                    ),
                     "checkin-each-round",
                     label=(
                         "Checkin once" if checkin_each_round else "Checkin each round"
                     ),
                 )
                 .add_interactive_button(
-                    hikari.ButtonStyle.SECONDARY
-                    if multideck
-                    else hikari.ButtonStyle.PRIMARY,
+                    (
+                        hikari.ButtonStyle.SECONDARY
+                        if multideck
+                        else hikari.ButtonStyle.PRIMARY
+                    ),
                     "multideck",
                     label=("Single Deck" if multideck else "Multideck"),
                 ),
@@ -1027,9 +1035,11 @@ class ConfigureTournament(BaseCommand):
             # only allow to activate the register-between option if not staggered
             if not self.tournament.flags & tournament.TournamentFlag.STAGGERED:
                 components[0].add_interactive_button(
-                    hikari.ButtonStyle.SECONDARY
-                    if between
-                    else hikari.ButtonStyle.PRIMARY,
+                    (
+                        hikari.ButtonStyle.SECONDARY
+                        if between
+                        else hikari.ButtonStyle.PRIMARY
+                    ),
                     "register-between",
                     label=("No late joiners" if between else "Join anytime"),
                 )
@@ -1749,7 +1759,8 @@ class RegisterPlayer(BaseCommand):
             description += (
                 "\n\n**Deck list required**\n"
                 "A decklist is required to participate, please use "
-                f"{UploadDeckFor.mention} to provide one before the tournament begins."
+                f"{UploadDeckFor.mention()} "
+                "to provide one before the tournament begins."
             )
         elif (
             self.tournament.max_rounds
@@ -2653,9 +2664,11 @@ class FixReport(BaseCommand):
             content=(
                 f"Result registered: {vp:.2g} VPs for {self._player_display(vekn)}"
             ),
-            flags=hikari.UNDEFINED
-            if self._is_judge_channel()
-            else hikari.MessageFlag.EPHEMERAL,
+            flags=(
+                hikari.UNDEFINED
+                if self._is_judge_channel()
+                else hikari.MessageFlag.EPHEMERAL
+            ),
         )
         if round is not None:
             return
@@ -2711,9 +2724,11 @@ class ValidateScore(BaseCommand):
         await self.update()
         await self.create_or_edit_response(
             content=f"Score validated for table {table}: {note}",
-            flags=hikari.UNDEFINED
-            if self._is_judge_channel()
-            else hikari.MessageFlag.EPHEMERAL,
+            flags=(
+                hikari.UNDEFINED
+                if self._is_judge_channel()
+                else hikari.MessageFlag.EPHEMERAL
+            ),
         )
 
 
@@ -3719,7 +3734,6 @@ def status_icon(status: tournament.PlayerStatus) -> str:
 
 
 class PlayersList(BaseCommand):
-
     """Players list with status icon - useful to sheperd the flock."""
 
     UPDATE = db.UpdateLevel.READ_ONLY
@@ -3897,13 +3911,15 @@ class DownloadReports(BaseCommand):
                     "",  # country
                     player.vekn,
                     info.rounds,
-                    "DQ"
-                    if info.status
-                    in [
-                        tournament.PlayerStatus.DISQUALIFIED
-                        or tournament.PlayerStatus.DROPPED_OUT
-                    ]
-                    else "",
+                    (
+                        "DQ"
+                        if info.status
+                        in [
+                            tournament.PlayerStatus.DISQUALIFIED
+                            or tournament.PlayerStatus.DROPPED_OUT
+                        ]
+                        else ""
+                    ),
                 ]
             )
         return self._build_csv("Methuselahs.csv", data)

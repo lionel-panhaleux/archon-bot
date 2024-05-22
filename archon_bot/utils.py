@@ -1,5 +1,6 @@
 """Useful generic tools
 """
+
 import logging
 from dataclasses import is_dataclass
 from typing import get_args, get_origin, Union, TypeVar

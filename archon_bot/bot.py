@@ -1,4 +1,5 @@
 """Discord Bot."""
+
 import asyncio
 import logging
 import os

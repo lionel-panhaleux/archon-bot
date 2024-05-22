@@ -1,7 +1,7 @@
 2.8 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- BUGIFX: `download-reports` now works even with more than 10 files (many rounds)
 
 
 2.7 (2024-01-16)

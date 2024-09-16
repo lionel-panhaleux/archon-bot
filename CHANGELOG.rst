@@ -1,4 +1,4 @@
-2.10 (unreleased)
+2.10 (2024-09-16)
 -----------------
 
 - Switch to pyproject.toml

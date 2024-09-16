@@ -1,7 +1,7 @@
 2.10 (unreleased)
 -----------------
 
-- Nothing changed yet.
+- Fix typing issue
 
 
 2.9 (2024-09-16)

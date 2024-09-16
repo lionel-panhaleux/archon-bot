@@ -6,7 +6,7 @@ import math
 import os
 import random
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, Optional, Tuple, Union, List
 
 import aiohttp
 import asgiref.sync
@@ -453,7 +453,7 @@ class Tournament:
     def check_deck(
         self,
         deck: krcg.deck.Deck,
-    ) -> [DeckIssueType]:
+    ) -> List[DeckIssueType]:
         """Check if the deck is tournament legal, return all deck issues"""
         issues = []
         library_count = deck.cards_count(lambda c: c.library)

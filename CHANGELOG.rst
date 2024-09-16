@@ -1,7 +1,9 @@
 2.9 (unreleased)
 ----------------
 
-- Nothing changed yet.
+- Fix minor seating issue (bump krcg to 4.1)
+- Fix DQ not holding issue
+- Add tests to make sure round-add and round-remove work as intended
 
 
 2.8 (2024-05-22)

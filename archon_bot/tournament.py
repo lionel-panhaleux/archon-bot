@@ -517,6 +517,8 @@ class Tournament:
         if self.flags & TournamentFlag.DECKLIST_REQUIRED and not player.deck:
             player.playing = False
             return PlayerStatus.MISSING_DECK
+        if self.dropped.get(player.vekn, None) == DropReason.DISQUALIFIED:
+            return PlayerStatus.DISQUALIFIED
         if self.state == TournamentState.CHECKIN or (
             self.state == TournamentState.WAITING_FOR_START
             and (judge or self.flags & TournamentFlag.REGISTER_BETWEEN)
@@ -580,7 +582,7 @@ class Tournament:
             self.state = TournamentState.WAITING_FOR_START
         # REGISTRATION, WAITING_FOR_START, WAITING_FOR_CHECKIN and PLAYING stay as is
 
-    async def start_round(self, progression_callback: Callable) -> Round:
+    async def start_round(self, progression_callback: Callable | None = None) -> Round:
         if self.state == TournamentState.REGISTRATION:
             raise CommandFailed("Check players in before starting the round")
         if self.state == TournamentState.PLAYING:

@@ -1829,6 +1829,12 @@ class CheckIn(BaseCommand):
             description = (
                 "You played the maximum number of rounds and cannot play another.\n"
             )
+        elif status == tournament.PlayerStatus.DISQUALIFIED:
+            title = "⚠️ Disqualified"
+            description = (
+                "You have been disqualified."
+                f"Only a <@&{self.discord.roles[Role.JUDGE].id}> can reinstate you."
+            )
         elif status == tournament.PlayerStatus.CHECKED_OUT:
             title = "⚠️ Checked out"
             description = (

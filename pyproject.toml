@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "archon-bot"
+version = "2.10.dev0"
+authors = [
+    { name = "Lionel Panhaleux", email = "lionel.panhaleux+krcg@gmail.com" },
+]
+description = "Discord bot for VTES tournaments"
+keywords = ["vampire", "vtes", "ccg", "discord", "bot"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Environment :: Plugins",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Games/Entertainment",
+]
+dependencies = [
+    "aiohttp",
+    "asgiref",
+    "chardet",
+    "krcg >= 4.1",
+    "hikari >= 2.0.0.dev122",
+    "orjson >= 3.9.10",
+    "psycopg[pool] >= 3.1.13",
+    "stringcase",
+    "unidecode",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "ruff",
+    "ipdb",
+    "ipython",
+    "pytest",
+    "pytest-asyncio",
+    "zest.releaser[recommended]",
+]
+
+[project.scripts]
+archon-bot = "archon_bot:main"
+
+[project.urls]
+Repository = "http://github.com/lionel-panhaleux/archon-bot"
+
+[tool.setuptools.packages.find]
+include = ["archon_bot*"]
+exclude = ["tests*"]
+
+[tool.pytest]
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.zest-releaser]
+create-wheel = true

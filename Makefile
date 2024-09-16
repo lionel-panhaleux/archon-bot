@@ -2,7 +2,7 @@
 
 quality:
 	black --check .
-	flake8
+	ruff check
 
 test: quality
 	pytest -vvs

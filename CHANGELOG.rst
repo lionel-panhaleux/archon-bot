@@ -1,7 +1,7 @@
 2.10 (unreleased)
 -----------------
 
-- Fix typing issue
+- Switch to pyproject.toml
 
 
 2.9 (2024-09-16)

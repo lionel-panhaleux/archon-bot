@@ -1,4 +1,4 @@
-2.9 (unreleased)
+2.9 (2024-09-16)
 ----------------
 
 - Fix minor seating issue (bump krcg to 4.1)

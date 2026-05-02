@@ -1,5 +1,4 @@
-"""Useful generic tools
-"""
+"""Useful generic tools"""
 
 import logging
 from dataclasses import is_dataclass
@@ -43,8 +42,7 @@ def dictas(cls: Dataclass, dic: dict) -> Dataclass:
         elif origin is dict:
             k_cls, v_cls = get_args(typ)
             return {
-                instantitate_type(k_cls, k): instantitate_type(v_cls, v)
-                for k, v in val.items()
+                instantitate_type(k_cls, k): instantitate_type(v_cls, v) for k, v in val.items()
             }
         elif origin in [Union, UnionType]:
             options = get_args(typ)

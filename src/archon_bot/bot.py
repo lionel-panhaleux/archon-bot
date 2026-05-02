@@ -56,9 +56,7 @@ async def on_ready(event: hikari.StartedEvent) -> None:
         registered_commands = await bot.rest.fetch_application_commands(
             application=application,
         )
-        if UPDATE or set(c.name for c in commands) ^ set(
-            c.name for c in registered_commands
-        ):
+        if UPDATE or set(c.name for c in commands) ^ set(c.name for c in registered_commands):
             logger.info("Updating commands: %s", commands)
             registered_commands = await bot.rest.set_application_commands(
                 application=application,
@@ -136,9 +134,7 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
             "Archon cannot be used in a private channel",
         )
         return
-    channel = event.interaction.app.cache.get_guild_channel(
-        event.interaction.channel_id
-    )
+    channel = event.interaction.app.cache.get_guild_channel(event.interaction.channel_id)
     if not channel:
         channel = await event.interaction.fetch_channel()
     logger.info(
@@ -171,20 +167,13 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
                 instance = command(
                     bot,
                     connection,
-                    (
-                        utils.dictas(Tournament, tournament_data)
-                        if tournament_data
-                        else None
-                    ),
+                    (utils.dictas(Tournament, tournament_data) if tournament_data else None),
                     event.interaction,
                     channel.id,
                     channel.parent_id,
                 )
                 await instance(
-                    **{
-                        option.name: option.value
-                        for option in event.interaction.options or []
-                    }
+                    **{option.name: option.value for option in event.interaction.options or []}
                 )
         except CommandFailed as exc:
             logger.info("Command failed: %s - %s", event.interaction, exc.args)
@@ -216,11 +205,7 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
                 instance = component_function(
                     bot,
                     connection,
-                    (
-                        utils.dictas(Tournament, tournament_data)
-                        if tournament_data
-                        else None
-                    ),
+                    (utils.dictas(Tournament, tournament_data) if tournament_data else None),
                     event.interaction,
                     channel.id,
                     channel.parent_id,
@@ -253,11 +238,7 @@ async def on_interaction(event: hikari.InteractionCreateEvent) -> None:
                 instance = component_function(
                     bot,
                     connection,
-                    (
-                        utils.dictas(Tournament, tournament_data)
-                        if tournament_data
-                        else None
-                    ),
+                    (utils.dictas(Tournament, tournament_data) if tournament_data else None),
                     event.interaction,
                     channel.id,
                     channel.parent_id,

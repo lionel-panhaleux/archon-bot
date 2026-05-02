@@ -126,9 +126,7 @@ async def test_dq_pre_checkin():
     tourney.drop(alice.vekn, tournament.DropReason.DISQUALIFIED)
     tourney.open_checkin()
     assert tourney.players[alice.vekn].playing is False
-    assert (
-        tourney.player_check_in(vekn=alice.vekn) == tournament.PlayerStatus.DISQUALIFIED
-    )
+    assert tourney.player_check_in(vekn=alice.vekn) == tournament.PlayerStatus.DISQUALIFIED
     tourney.player_check_in(vekn=bob.vekn) == tournament.PlayerStatus.CHECKED_IN
     tourney.player_check_in(vekn=claire.vekn) == tournament.PlayerStatus.CHECKED_IN
     tourney.player_check_in(vekn=doug.vekn) == tournament.PlayerStatus.CHECKED_IN

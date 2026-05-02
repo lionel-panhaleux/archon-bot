@@ -1,9 +1,7 @@
 import hikari
 
 
-SPECTATE_TEXT = (
-    hikari.Permissions.VIEW_CHANNEL | hikari.Permissions.READ_MESSAGE_HISTORY
-)
+SPECTATE_TEXT = hikari.Permissions.VIEW_CHANNEL | hikari.Permissions.READ_MESSAGE_HISTORY
 TEXT = (
     hikari.Permissions.VIEW_CHANNEL
     | hikari.Permissions.READ_MESSAGE_HISTORY
@@ -12,11 +10,7 @@ TEXT = (
     | hikari.Permissions.ADD_REACTIONS
 )
 SPECTATE_VOICE = hikari.Permissions.VIEW_CHANNEL | hikari.Permissions.CONNECT
-VOICE = (
-    hikari.Permissions.VIEW_CHANNEL
-    | hikari.Permissions.CONNECT
-    | hikari.Permissions.SPEAK
-)
+VOICE = hikari.Permissions.VIEW_CHANNEL | hikari.Permissions.CONNECT | hikari.Permissions.SPEAK
 JUDGE_VOICE = (
     hikari.Permissions.VIEW_CHANNEL
     | hikari.Permissions.CONNECT

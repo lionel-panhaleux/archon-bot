@@ -21,9 +21,7 @@ def reconnect_failed(_pool: psycopg_pool.AsyncConnectionPool):
 
 DB_USER = os.getenv("DB_USER")
 DB_PWD = os.getenv("DB_PWD")
-psycopg.types.json.set_json_dumps(
-    functools.partial(orjson.dumps, option=orjson.OPT_NON_STR_KEYS)
-)
+psycopg.types.json.set_json_dumps(functools.partial(orjson.dumps, option=orjson.OPT_NON_STR_KEYS))
 psycopg.types.json.set_json_loads(orjson.loads)
 #: await POOL.open() before using this module, and POOL.close() when finished
 POOL = psycopg_pool.AsyncConnectionPool(
@@ -89,10 +87,7 @@ async def init():
                 "data json)"
             )
             await cursor.execute(
-                "CREATE INDEX IF NOT EXISTS tournament_agc ON tournament("
-                "active, "
-                "guild, "
-                "category)"
+                "CREATE INDEX IF NOT EXISTS tournament_agc ON tournament(active, guild, category)"
             )
 
 
@@ -109,8 +104,7 @@ async def create_tournament(conn, guild_id, category_id, tournament_data):
     async with conn.cursor() as cursor:
         try:
             await cursor.execute(
-                "INSERT INTO tournament (active, guild, category, data) "
-                "VALUES (TRUE, %s, %s, %s)",
+                "INSERT INTO tournament (active, guild, category, data) VALUES (TRUE, %s, %s, %s)",
                 [
                     str(guild_id),
                     str(category_id) if category_id else "",
@@ -142,8 +136,7 @@ async def update_tournament(conn, guild_id, category_id, tournament_data):
     TOURNAMENTS[(guild_id, category_id)] = tournament_data
     async with conn.cursor() as cursor:
         await cursor.execute(
-            "UPDATE tournament SET data=%s "
-            "WHERE active=TRUE AND guild=%s AND category=%s",
+            "UPDATE tournament SET data=%s WHERE active=TRUE AND guild=%s AND category=%s",
             [
                 psycopg.types.json.Json(tournament_data),
                 str(guild_id),
@@ -185,7 +178,6 @@ async def close_tournament(conn, guild_id, category_id):
     TOURNAMENTS.pop((guild_id, category_id), None)
     async with conn.cursor() as cursor:
         await cursor.execute(
-            "UPDATE tournament SET active=FALSE "
-            "WHERE active=TRUE AND guild=%s AND category=%s",
+            "UPDATE tournament SET active=FALSE WHERE active=TRUE AND guild=%s AND category=%s",
             [str(guild_id), str(category_id) if category_id else ""],
         )

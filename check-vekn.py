@@ -25,10 +25,7 @@ async def main(data):
             print("Unable to authentify to VEKN", file=sys.stderr)
             return
         results = await asyncio.gather(
-            *(
-                fetch_official_vekn(session, token, vekn.strip(" #\r\n"))
-                for vekn in data
-            )
+            *(fetch_official_vekn(session, token, vekn.strip(" #\r\n")) for vekn in data)
         )
         writer = csv.writer(sys.stdout)
         writer.writerows(results)
